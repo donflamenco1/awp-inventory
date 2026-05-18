@@ -1,0 +1,4 @@
+flask
+flask-cors
+brother_ql
+pillow
