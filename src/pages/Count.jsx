@@ -300,54 +300,49 @@ export default function Count() {
                 </div>
               )}
 
-              {/* +/- counter row */}
-              <div className="flex mx-4 mt-3 gap-3 items-center">
-                <button
-                  onClick={decrement}
-                  className={`w-16 h-16 text-4xl rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
-                    btnFlash === 'minus' ? 'bg-gray-400 text-white' : 'bg-gray-100 text-gray-700'
-                  }`}
-                >
-                  −
-                </button>
-                {/* Hidden real input — focused by the tap button below for iOS keyboard */}
-                <input
-                  ref={qtyRef}
-                  key={`${matchedItem?.id}-${location}`}
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  autoComplete="off"
-                  value={qty}
-                  onChange={e => {
-                    const v = e.target.value.replace(/[^0-9]/g, '')
-                    setQty(v === '' ? '' : parseInt(v))
-                  }}
-                  onFocus={e => e.target.select()}
-                  onBlur={e => { if (e.target.value === '' || isNaN(qty)) setQty(0) }}
-                  className="flex-1 min-w-0 text-center text-5xl font-extrabold border-2 border-blue-300 rounded-2xl py-3 outline-none focus:border-blue-500 bg-blue-50"
-                />
-                <button
-                  onClick={increment}
-                  className={`w-16 h-16 text-4xl rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
-                    btnFlash === 'plus' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
-                  }`}
-                >
-                  +
-                </button>
+              {/* Qty display */}
+              <div className="mx-4 mt-3 bg-blue-50 border-2 border-blue-300 rounded-2xl py-4 text-center">
+                <div className="text-6xl font-extrabold text-gray-900 tracking-tight">
+                  {qty === 0 || qty === '' ? <span className="text-gray-300">0</span> : qty}
+                </div>
+                {existingQty > 0 && (
+                  <div className="text-xs text-orange-500 font-semibold mt-1">
+                    + {existingQty} already counted = {existingQty + (Number(qty) || 0)} total
+                  </div>
+                )}
               </div>
-              {existingQty > 0 && (
-                <p className="text-center text-xs text-orange-500 font-semibold mt-1">
-                  Adding to {existingQty} — saves as {existingQty + (Number(qty) || 0)} total
-                </p>
-              )}
-              {/* Keyboard trigger — onClick is synchronous user gesture, opens keyboard on iOS */}
-              <button
-                onClick={() => qtyRef.current?.focus()}
-                className="mx-4 mt-2 w-[calc(100%-2rem)] border-2 border-blue-300 border-dashed rounded-xl py-3 text-sm font-semibold text-blue-600 active:bg-blue-50"
-              >
-                Tap here to type a number
-              </button>
+
+              {/* In-app numpad — works with Bluetooth scanner (no system keyboard needed) */}
+              <div className="mx-4 mt-2 grid grid-cols-3 gap-2">
+                {[1,2,3,4,5,6,7,8,9,'C',0,'⌫'].map(key => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      if (key === '⌫') {
+                        setQty(q => {
+                          const s = String(q || 0)
+                          return s.length <= 1 ? 0 : parseInt(s.slice(0, -1))
+                        })
+                      } else if (key === 'C') {
+                        setQty(0)
+                      } else {
+                        setQty(q => {
+                          const s = (q === 0 || q === '') ? '' : String(q)
+                          const next = parseInt(s + String(key))
+                          return isNaN(next) ? 0 : next
+                        })
+                      }
+                    }}
+                    className={`rounded-2xl py-5 text-2xl font-bold active:scale-95 transition-transform ${
+                      key === 'C' ? 'bg-red-100 text-red-600' :
+                      key === '⌫' ? 'bg-gray-200 text-gray-700' :
+                      'bg-gray-100 text-gray-800'
+                    }`}
+                  >
+                    {key}
+                  </button>
+                ))}
+              </div>
 
               <div className="flex gap-3 mx-4 mt-3">
                 <button
