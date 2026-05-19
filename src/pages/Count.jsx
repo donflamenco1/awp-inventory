@@ -17,13 +17,11 @@ export default function Count() {
   const [qty, setQty] = useState(0)
   const [existingQty, setExistingQty] = useState(0) // already saved for this item+location
   const [btnFlash, setBtnFlash] = useState(null) // 'plus' | 'minus' | null
-  const [listening, setListening] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [scanning, setScanning] = useState(false)
   const skuRef = useRef(null)
   const qtyRef = useRef(null)
   const scannerRef = useRef(null)
-  const recognitionRef = useRef(null)
   const lastTapRef = useRef({ plus: 0, minus: 0 })
 
   const { data: items = [] } = useQuery({ queryKey: ['items'], queryFn: getItems })
@@ -163,26 +161,7 @@ export default function Count() {
     })
   }
 
-  // Voice quantity input
-  function startVoice() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) { alert('Voice input not supported in this browser.'); return }
-    const r = new SR()
-    r.lang = 'en-US'
-    r.interimResults = false
-    r.maxAlternatives = 1
-    r.onresult = e => {
-      const spoken = e.results[0][0].transcript.trim()
-      const num = parseFloat(spoken.replace(/[^0-9.]/g, ''))
-      if (!isNaN(num)) setQty(Math.round(num))
-      setListening(false)
-    }
-    r.onerror = () => setListening(false)
-    r.onend = () => setListening(false)
-    recognitionRef.current = r
-    r.start()
-    setListening(true)
-  }
+
 
   // Name search results
   const nameResults = nameSearch.trim().length >= 2
@@ -321,7 +300,7 @@ export default function Count() {
                 </div>
               )}
 
-              {/* Big +/- counter */}
+              {/* +/- counter row */}
               <div className="flex mx-4 mt-3 gap-3 items-center">
                 <button
                   onClick={decrement}
@@ -331,13 +310,13 @@ export default function Count() {
                 >
                   −
                 </button>
+                {/* Hidden real input — focused by the tap button below for iOS keyboard */}
                 <input
                   ref={qtyRef}
                   key={`${matchedItem?.id}-${location}`}
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  autoFocus
                   autoComplete="off"
                   value={qty}
                   onChange={e => {
@@ -362,26 +341,12 @@ export default function Count() {
                   Adding to {existingQty} — saves as {existingQty + (Number(qty) || 0)} total
                 </p>
               )}
-              {/* Explicit keyboard trigger — guaranteed to open keyboard on Android PWA */}
+              {/* Keyboard trigger — onClick is synchronous user gesture, opens keyboard on iOS */}
               <button
-                onTouchStart={() => qtyRef.current?.focus()}
                 onClick={() => qtyRef.current?.focus()}
-                className="mx-4 mt-2 w-[calc(100%-2rem)] border-2 border-blue-300 border-dashed rounded-xl py-2.5 text-sm font-semibold text-blue-500 active:bg-blue-50"
+                className="mx-4 mt-2 w-[calc(100%-2rem)] border-2 border-blue-300 border-dashed rounded-xl py-3 text-sm font-semibold text-blue-600 active:bg-blue-50"
               >
-                ⌨ Tap here to type quantity
-              </button>
-
-              <button
-                onClick={startVoice}
-                className={`mx-4 mt-2 w-[calc(100%-2rem)] flex items-center justify-center gap-2 rounded-xl py-3 text-sm font-semibold transition-colors ${
-                  listening ? 'bg-red-50 border-2 border-red-300 text-red-600' : 'bg-gray-100 text-gray-600'
-                }`}
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-                {listening ? 'Listening…' : 'Speak quantity'}
+                Tap here to type a number
               </button>
 
               <div className="flex gap-3 mx-4 mt-3">
