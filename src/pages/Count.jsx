@@ -312,14 +312,17 @@ export default function Count() {
                   −
                 </button>
                 <input
-                  type="number"
+                  type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
-                  min={0}
                   value={qty}
-                  onChange={e => setQty(Math.max(0, parseInt(e.target.value) || 0))}
+                  onChange={e => {
+                    const v = e.target.value.replace(/[^0-9]/g, '')
+                    setQty(v === '' ? '' : parseInt(v))
+                  }}
                   onFocus={e => e.target.select()}
-                  className="flex-1 min-w-0 text-center text-5xl font-extrabold border-2 border-gray-200 rounded-2xl py-3 outline-none focus:border-blue-400"
+                  onBlur={e => { if (e.target.value === '' || isNaN(qty)) setQty(0) }}
+                  className="flex-1 min-w-0 text-center text-5xl font-extrabold border-2 border-blue-300 rounded-2xl py-3 outline-none focus:border-blue-500 bg-blue-50"
                 />
                 <button
                   onClick={increment}
@@ -330,6 +333,7 @@ export default function Count() {
                   +
                 </button>
               </div>
+              <p className="text-center text-xs text-blue-500 font-semibold mt-1">Tap number to type quantity</p>
 
               <button
                 onClick={startVoice}
