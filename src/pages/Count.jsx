@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getItems, getActiveSession, createSession,
@@ -11,27 +11,26 @@ export default function Count() {
   const qc = useQueryClient()
   const [location, setLocation] = useState('PRIMARY')
   const [skuInput, setSkuInput] = useState('')
+  const [nameSearch, setNameSearch] = useState('')
   const [matchedItem, setMatchedItem] = useState(null)
-  const [qty, setQty] = useState(0)
-  const [scanning, setScanning] = useState(false)
+  const [notFound, setNotFound] = useState(false)
+  const [qty, setQty] = useState(1)
   const [listening, setListening] = useState(false)
   const [feedback, setFeedback] = useState(null)
+  const [scanning, setScanning] = useState(false)
   const skuRef = useRef(null)
-  const qtyRef = useRef(null)
   const scannerRef = useRef(null)
   const recognitionRef = useRef(null)
 
   const { data: items = [] } = useQuery({ queryKey: ['items'], queryFn: getItems })
   const { data: session } = useQuery({ queryKey: ['activeSession'], queryFn: getActiveSession })
 
-  // Auto-create session if none exists
   const createMutation = useMutation({
     mutationFn: () => createSession(new Date().toISOString().slice(0, 10)),
     onSuccess: () => qc.invalidateQueries(['activeSession']),
   })
-  useEffect(() => {
-    if (session === null) createMutation.mutate()
-  }, [session])
+  // Auto-create session if none exists
+  if (session === null && !createMutation.isPending) createMutation.mutate()
 
   const { data: scanEntries = [] } = useQuery({
     queryKey: ['scanEntries', session?.id],
@@ -40,8 +39,7 @@ export default function Count() {
   })
 
   const saveMutation = useMutation({
-    mutationFn: ({ itemId, qty }) =>
-      upsertScanEntry(session.id, itemId, location, qty),
+    mutationFn: ({ itemId, qty }) => upsertScanEntry(session.id, itemId, location, qty),
     onSuccess: (_, { itemName }) => {
       qc.invalidateQueries(['scanEntries', session?.id])
       qc.invalidateQueries(['counts', session?.id])
@@ -51,17 +49,17 @@ export default function Count() {
     },
   })
 
-  // Build lookup map by SKU
+  // SKU lookup map
   const itemBySkuMap = Object.fromEntries(
     items.flatMap(i => {
-      const matches = []
-      if (i.internal_sku) matches.push([i.internal_sku.toLowerCase(), i])
-      if (i.hd_sku) matches.push([i.hd_sku.toLowerCase(), i])
-      if (i.menards_sku) matches.push([i.menards_sku.toLowerCase(), i])
-      if (i.amazon_sku) matches.push([i.amazon_sku.toLowerCase(), i])
-      if (i.idi_code) matches.push([i.idi_code.toLowerCase(), i])
-      if (i.applied_code) matches.push([i.applied_code.toLowerCase(), i])
-      return matches
+      const entries = []
+      if (i.internal_sku) entries.push([i.internal_sku.toLowerCase(), i])
+      if (i.hd_sku) entries.push([i.hd_sku.toLowerCase(), i])
+      if (i.menards_sku) entries.push([i.menards_sku.toLowerCase(), i])
+      if (i.amazon_sku) entries.push([i.amazon_sku.toLowerCase(), i])
+      if (i.idi_code) entries.push([i.idi_code.toLowerCase(), i])
+      if (i.applied_code) entries.push([i.applied_code.toLowerCase(), i])
+      return entries
     })
   )
 
@@ -72,37 +70,34 @@ export default function Count() {
 
   function resetInput() {
     setSkuInput('')
+    setNameSearch('')
     setMatchedItem(null)
-    setQty(0)
+    setNotFound(false)
+    setQty(1)
     setTimeout(() => skuRef.current?.focus(), 50)
+  }
+
+  function selectItem(item) {
+    setMatchedItem(item)
+    setNotFound(false)
+    setNameSearch('')
+    setQty(1)
   }
 
   function handleSkuChange(val) {
     setSkuInput(val)
+    setNotFound(false)
     const found = lookupSku(val)
-    if (found) {
-      setMatchedItem(found)
-      setQty(0)
-      setTimeout(() => qtyRef.current?.focus(), 50)
-    } else {
-      setMatchedItem(null)
-    }
+    if (found) selectItem(found)
+    else setMatchedItem(null)
   }
 
-  // Bluetooth scanner fires Enter after barcode
   function handleSkuKeyDown(e) {
     if (e.key === 'Enter' && skuInput.trim()) {
       const found = lookupSku(skuInput)
-      if (found) {
-        setMatchedItem(found)
-        setQty(0)
-        setTimeout(() => qtyRef.current?.focus(), 50)
-      }
+      if (found) { selectItem(found) }
+      else { setNotFound(true) }
     }
-  }
-
-  function handleQtyKeyDown(e) {
-    if (e.key === 'Enter' && matchedItem) handleSave()
   }
 
   function handleSave() {
@@ -135,24 +130,21 @@ export default function Count() {
       setScanning(false)
       setSkuInput(code)
       const found = lookupSku(code)
-      if (found) {
-        setMatchedItem(found)
-        setQty(0)
-        setTimeout(() => qtyRef.current?.focus(), 50)
-      }
+      if (found) { selectItem(found) }
+      else { setNotFound(true) }
     })
   }
 
-  // Voice input via Web Speech API
+  // Voice quantity input
   function startVoice() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SpeechRecognition) { alert('Voice input not supported in this browser.'); return }
-    const r = new SpeechRecognition()
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) { alert('Voice input not supported in this browser.'); return }
+    const r = new SR()
     r.lang = 'en-US'
     r.interimResults = false
     r.maxAlternatives = 1
     r.onresult = e => {
-      const spoken = e.results[0][0].transcript.trim().toLowerCase()
+      const spoken = e.results[0][0].transcript.trim()
       const num = parseFloat(spoken.replace(/[^0-9.]/g, ''))
       if (!isNaN(num)) setQty(Math.round(num))
       setListening(false)
@@ -164,10 +156,17 @@ export default function Count() {
     setListening(true)
   }
 
-  const sessionItemIds = new Set(scanEntries.map(e => e.item_id))
-  const progress = items.length > 0
-    ? Math.round((sessionItemIds.size / items.length) * 100) : 0
+  // Name search results
+  const nameResults = nameSearch.trim().length >= 2
+    ? items.filter(i =>
+        i.name?.toLowerCase().includes(nameSearch.toLowerCase()) ||
+        i.size?.toLowerCase().includes(nameSearch.toLowerCase()) ||
+        i.internal_sku?.toLowerCase().includes(nameSearch.toLowerCase())
+      ).slice(0, 6)
+    : []
 
+  const sessionItemIds = new Set(scanEntries.map(e => e.item_id))
+  const progress = items.length > 0 ? Math.round((sessionItemIds.size / items.length) * 100) : 0
   const recentEntries = scanEntries.slice(0, 8)
 
   return (
@@ -179,9 +178,7 @@ export default function Count() {
             key={loc}
             onClick={() => { setLocation(loc); resetInput() }}
             className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-              location === loc
-                ? 'bg-white text-blue-700 shadow-sm'
-                : 'text-gray-500'
+              location === loc ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500'
             }`}
           >
             {loc === 'PRIMARY' ? 'Primary Storage' : 'Heated Area'}
@@ -193,14 +190,10 @@ export default function Count() {
       {matchedItem && (
         <div className="mx-4 mt-3 bg-green-50 border border-green-200 rounded-xl px-4 py-3 flex items-center justify-between">
           <div>
-            <div className="text-sm font-bold text-green-700">
-              {matchedItem.name} {matchedItem.size}
-            </div>
-            <div className="text-xs text-green-600 mt-0.5">
-              {matchedItem.internal_sku} · {matchedItem.primary_supplier}
-            </div>
+            <div className="text-sm font-bold text-green-700">{matchedItem.name} {matchedItem.size}</div>
+            <div className="text-xs text-green-600 mt-0.5">{matchedItem.internal_sku} · {matchedItem.primary_supplier}</div>
           </div>
-          <div className="text-3xl font-extrabold text-green-700">{qty}</div>
+          <button onClick={resetInput} className="text-xs text-green-600 font-semibold underline ml-2">Change</button>
         </div>
       )}
 
@@ -211,78 +204,104 @@ export default function Count() {
         </div>
       )}
 
-      {/* Camera scanner area */}
+      {/* Camera scanner */}
       {scanning ? (
         <div className="mx-4 mt-3">
           <div ref={scannerRef} className="scanner-viewport rounded-xl overflow-hidden bg-black" />
-          <button
-            onClick={() => setScanning(false)}
-            className="w-full mt-2 bg-gray-100 text-gray-700 font-semibold rounded-xl py-3 text-sm"
-          >
+          <button onClick={() => setScanning(false)}
+            className="w-full mt-2 bg-gray-100 text-gray-700 font-semibold rounded-xl py-3 text-sm">
             Cancel
           </button>
         </div>
       ) : (
         <>
-          {/* Scan prompt box */}
+          {/* Only show scan + search when no item matched yet */}
           {!matchedItem && (
-            <button
-              onClick={startCameraScanner}
-              className="mx-4 mt-3 w-[calc(100%-2rem)] bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl py-5 flex flex-col items-center gap-2"
-            >
-              <svg className="w-8 h-8 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
-                  d="M3 9V6a1 1 0 011-1h3M3 15v3a1 1 0 001 1h3m11-4v3a1 1 0 01-1 1h-3m4-11V6a1 1 0 00-1-1h-3M7 9h10M7 12h10M7 15h4" />
-              </svg>
-              <span className="text-sm font-semibold text-blue-600">Tap to scan with camera</span>
-              <span className="text-xs text-blue-400">Bluetooth scanner also works — just scan</span>
-            </button>
+            <>
+              <button
+                onClick={startCameraScanner}
+                className="mx-4 mt-3 w-[calc(100%-2rem)] bg-blue-50 border-2 border-dashed border-blue-300 rounded-xl py-4 flex flex-col items-center gap-1.5"
+              >
+                <svg className="w-7 h-7 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+                    d="M3 9V6a1 1 0 011-1h3M3 15v3a1 1 0 001 1h3m11-4v3a1 1 0 01-1 1h-3m4-11V6a1 1 0 00-1-1h-3M7 9h10M7 12h10M7 15h4" />
+                </svg>
+                <span className="text-sm font-semibold text-blue-600">Tap to scan barcode</span>
+              </button>
+
+              {/* SKU input */}
+              <div className="mx-4 mt-2">
+                <input
+                  ref={skuRef}
+                  value={skuInput}
+                  onChange={e => handleSkuChange(e.target.value)}
+                  onKeyDown={handleSkuKeyDown}
+                  placeholder="Scan barcode or type SKU…"
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
+                />
+              </div>
+
+              {/* Not found message */}
+              {notFound && (
+                <div className="mx-4 mt-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-sm text-red-600 font-semibold">
+                  Barcode not found — search by name below
+                </div>
+              )}
+
+              {/* Name search */}
+              <div className="mx-4 mt-2">
+                <input
+                  value={nameSearch}
+                  onChange={e => setNameSearch(e.target.value)}
+                  placeholder="Search by item name…"
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
+                />
+              </div>
+
+              {/* Name search results */}
+              {nameResults.length > 0 && (
+                <div className="mx-4 mt-1 border border-gray-200 rounded-xl overflow-hidden">
+                  {nameResults.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => selectItem(item)}
+                      className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 active:bg-gray-50"
+                    >
+                      <div className="text-sm font-semibold text-gray-800">{item.name} {item.size}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku} · {item.primary_supplier}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
-          {/* SKU input */}
-          <div className="flex gap-2 mx-4 mt-2">
-            <input
-              ref={skuRef}
-              value={skuInput}
-              onChange={e => handleSkuChange(e.target.value)}
-              onKeyDown={handleSkuKeyDown}
-              placeholder="SKU or barcode…"
-              autoComplete="off"
-              autoCapitalize="characters"
-              className="flex-1 border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
-            />
-            {matchedItem && (
-              <button
-                onClick={resetInput}
-                className="border-2 border-gray-200 rounded-xl px-4 text-sm font-semibold text-gray-500"
-              >
-                Clear
-              </button>
-            )}
-          </div>
-
-          {/* Qty entry */}
+          {/* Qty controls — shown once item is selected */}
           {matchedItem && (
             <>
-              <div className="flex mx-4 mt-3 border-2 border-gray-200 rounded-xl overflow-hidden">
+              {/* Big +/- counter */}
+              <div className="flex mx-4 mt-4 gap-3 items-center">
                 <button
                   onClick={() => setQty(q => Math.max(0, q - 1))}
-                  className="w-14 h-14 bg-gray-100 text-2xl text-gray-700 font-light shrink-0 active:bg-gray-200"
+                  className="w-16 h-16 bg-gray-100 text-4xl text-gray-700 rounded-2xl active:bg-gray-200 flex items-center justify-center shrink-0"
                 >
                   −
                 </button>
                 <input
-                  ref={qtyRef}
                   type="number"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   min={0}
                   value={qty}
                   onChange={e => setQty(Math.max(0, parseInt(e.target.value) || 0))}
-                  onKeyDown={handleQtyKeyDown}
-                  className="flex-1 text-center text-3xl font-extrabold border-none outline-none py-2"
+                  onFocus={e => e.target.select()}
+                  className="flex-1 min-w-0 text-center text-5xl font-extrabold border-2 border-gray-200 rounded-2xl py-3 outline-none focus:border-blue-400"
                 />
                 <button
                   onClick={() => setQty(q => q + 1)}
-                  className="w-14 h-14 bg-gray-100 text-2xl text-gray-700 font-light shrink-0 active:bg-gray-200"
+                  className="w-16 h-16 bg-gray-100 text-4xl text-gray-700 rounded-2xl active:bg-gray-200 flex items-center justify-center shrink-0"
                 >
                   +
                 </button>
@@ -301,13 +320,13 @@ export default function Count() {
                 {listening ? 'Listening…' : 'Speak quantity'}
               </button>
 
-              <div className="flex gap-3 mx-4 mt-2">
+              <div className="flex gap-3 mx-4 mt-3">
                 <button
                   onClick={handleSave}
                   disabled={saveMutation.isPending}
-                  className="flex-1 bg-green-700 text-white font-semibold rounded-xl py-3.5 text-sm disabled:opacity-60"
+                  className="flex-1 bg-green-700 text-white font-bold rounded-xl py-4 text-base disabled:opacity-60"
                 >
-                  {saveMutation.isPending ? 'Saving…' : 'Save & Next Item'}
+                  {saveMutation.isPending ? 'Saving…' : 'Save & Next'}
                 </button>
               </div>
             </>
@@ -339,9 +358,7 @@ export default function Count() {
             {recentEntries.map(e => (
               <div key={e.id} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
                 <div>
-                  <div className="text-sm font-semibold text-gray-800">
-                    {e.items?.name} {e.items?.size}
-                  </div>
+                  <div className="text-sm font-semibold text-gray-800">{e.items?.name} {e.items?.size}</div>
                   <div className="text-xs text-gray-400 mt-0.5">
                     {e.location} · {new Date(e.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                   </div>
