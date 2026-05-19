@@ -14,7 +14,8 @@ export default function Count() {
   const [nameSearch, setNameSearch] = useState('')
   const [matchedItem, setMatchedItem] = useState(null)
   const [notFound, setNotFound] = useState(false)
-  const [qty, setQty] = useState(1)
+  const [qty, setQty] = useState(0)
+  const [existingQty, setExistingQty] = useState(0) // already saved for this item+location
   const [btnFlash, setBtnFlash] = useState(null) // 'plus' | 'minus' | null
   const [listening, setListening] = useState(false)
   const [feedback, setFeedback] = useState(null)
@@ -75,15 +76,21 @@ export default function Count() {
     setNameSearch('')
     setMatchedItem(null)
     setNotFound(false)
-    setQty(1)
+    setQty(0)
+    setExistingQty(0)
     setTimeout(() => skuRef.current?.focus(), 50)
   }
 
-  function selectItem(item) {
+  // fromEdit=true means tap-to-correct: pre-fill full qty, save will replace
+  function selectItem(item, fromEdit = false, editQty = 0) {
+    const existing = fromEdit ? 0 : (
+      scanEntries.find(e => e.item_id === item.id && e.location === location)?.quantity || 0
+    )
     setMatchedItem(item)
+    setExistingQty(existing)
+    setQty(fromEdit ? editQty : 0)
     setNotFound(false)
     setNameSearch('')
-    setQty(1)
   }
 
   function handleSkuChange(val) {
@@ -106,7 +113,7 @@ export default function Count() {
     if (!matchedItem || !session) return
     saveMutation.mutate({
       itemId: matchedItem.id,
-      qty: Number(qty),
+      qty: existingQty + (Number(qty) || 0),
       itemName: `${matchedItem.name} ${matchedItem.size || ''}`.trim(),
     })
   }
@@ -301,8 +308,20 @@ export default function Count() {
           {/* Qty controls — shown once item is selected */}
           {matchedItem && (
             <>
+              {/* Already-counted banner */}
+              {existingQty > 0 && (
+                <div className="mx-4 mt-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center justify-between">
+                  <div className="text-sm text-orange-700">
+                    Already counted: <span className="font-bold">{existingQty}</span> in {location}
+                  </div>
+                  <div className="text-sm font-bold text-orange-700">
+                    Total → {existingQty + (Number(qty) || 0)}
+                  </div>
+                </div>
+              )}
+
               {/* Big +/- counter */}
-              <div className="flex mx-4 mt-4 gap-3 items-center">
+              <div className="flex mx-4 mt-3 gap-3 items-center">
                 <button
                   onClick={decrement}
                   className={`w-16 h-16 text-4xl rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
@@ -333,7 +352,9 @@ export default function Count() {
                   +
                 </button>
               </div>
-              <p className="text-center text-xs text-blue-500 font-semibold mt-1">Tap number to type quantity</p>
+              <p className="text-center text-xs text-blue-500 font-semibold mt-1">
+                {existingQty > 0 ? `Enter additional amount — saves as ${existingQty + (Number(qty) || 0)} total` : 'Tap number to type quantity'}
+              </p>
 
               <button
                 onClick={startVoice}
@@ -390,11 +411,9 @@ export default function Count() {
                 onClick={() => {
                   const item = items.find(i => i.id === e.item_id)
                   if (!item) return
-                  setMatchedItem(item)
-                  setQty(e.quantity)
+                  setLocation(e.location)
+                  selectItem(item, true, e.quantity)
                   setSkuInput('')
-                  setNameSearch('')
-                  setNotFound(false)
                   window.scrollTo({ top: 0, behavior: 'smooth' })
                 }}
                 className="w-full flex items-center justify-between px-4 py-2.5 border-b border-gray-100 active:bg-gray-50 text-left"
