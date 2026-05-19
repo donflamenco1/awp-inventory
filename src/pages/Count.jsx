@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   getItems, getActiveSession, createSession,
@@ -11,16 +11,16 @@ export default function Count() {
   const qc = useQueryClient()
   const [location, setLocation] = useState('PRIMARY')
   const [skuInput, setSkuInput] = useState('')
-  const [nameSearch, setNameSearch] = useState('')
   const [matchedItem, setMatchedItem] = useState(null)
   const [notFound, setNotFound] = useState(false)
+  const [showBrowser, setShowBrowser] = useState(false)
   const [qty, setQty] = useState(0)
-  const [existingQty, setExistingQty] = useState(0) // already saved for this item+location
-  const [btnFlash, setBtnFlash] = useState(null) // 'plus' | 'minus' | null
+  const [existingQty, setExistingQty] = useState(0)
+  const [btnFlash, setBtnFlash] = useState(null)
   const [feedback, setFeedback] = useState(null)
   const [scanning, setScanning] = useState(false)
+  const [missedExpanded, setMissedExpanded] = useState(false)
   const skuRef = useRef(null)
-  const qtyRef = useRef(null)
   const scannerRef = useRef(null)
   const lastTapRef = useRef({ plus: 0, minus: 0 })
 
@@ -31,7 +31,6 @@ export default function Count() {
     mutationFn: () => createSession(new Date().toISOString().slice(0, 10)),
     onSuccess: () => qc.invalidateQueries(['activeSession']),
   })
-  // Auto-create session if none exists
   if (session === null && !createMutation.isPending) createMutation.mutate()
 
   const { data: scanEntries = [] } = useQuery({
@@ -51,7 +50,6 @@ export default function Count() {
     },
   })
 
-  // SKU lookup map
   const itemBySkuMap = Object.fromEntries(
     items.flatMap(i => {
       const entries = []
@@ -72,15 +70,14 @@ export default function Count() {
 
   function resetInput() {
     setSkuInput('')
-    setNameSearch('')
     setMatchedItem(null)
     setNotFound(false)
+    setShowBrowser(false)
     setQty(0)
     setExistingQty(0)
     setTimeout(() => skuRef.current?.focus(), 50)
   }
 
-  // fromEdit=true means tap-to-correct: pre-fill full qty, save will replace
   function selectItem(item, fromEdit = false, editQty = 0) {
     const existing = fromEdit ? 0 : (
       scanEntries.find(e => e.item_id === item.id && e.location === location)?.quantity || 0
@@ -89,7 +86,7 @@ export default function Count() {
     setExistingQty(existing)
     setQty(fromEdit ? editQty : 0)
     setNotFound(false)
-    setNameSearch('')
+    setShowBrowser(false)
   }
 
   function handleSkuChange(val) {
@@ -104,7 +101,7 @@ export default function Count() {
     if (e.key === 'Enter' && skuInput.trim()) {
       const found = lookupSku(skuInput)
       if (found) { selectItem(found) }
-      else { setNotFound(true) }
+      else { setNotFound(true); setShowBrowser(true) }
     }
   }
 
@@ -135,7 +132,6 @@ export default function Count() {
     setTimeout(() => setBtnFlash(null), 120)
   }
 
-  // Camera barcode scanning via Quagga
   async function startCameraScanner() {
     const Quagga = (await import('quagga')).default
     setScanning(true)
@@ -157,24 +153,34 @@ export default function Count() {
       setSkuInput(code)
       const found = lookupSku(code)
       if (found) { selectItem(found) }
-      else { setNotFound(true) }
+      else { setNotFound(true); setShowBrowser(true) }
     })
   }
 
-
-
-  // Name search results
-  const nameResults = nameSearch.trim().length >= 2
-    ? items.filter(i =>
-        i.name?.toLowerCase().includes(nameSearch.toLowerCase()) ||
-        i.size?.toLowerCase().includes(nameSearch.toLowerCase()) ||
-        i.internal_sku?.toLowerCase().includes(nameSearch.toLowerCase())
-      ).slice(0, 6)
-    : []
+  // Items grouped by category for the browser
+  const itemsByCategory = useMemo(() => {
+    const sorted = [...items].sort((a, b) => {
+      const catA = a.category || 'ZZZ'
+      const catB = b.category || 'ZZZ'
+      if (catA !== catB) return catA.localeCompare(catB)
+      return (a.name || '').localeCompare(b.name || '')
+    })
+    const groups = {}
+    for (const item of sorted) {
+      const cat = item.category || 'Other'
+      if (!groups[cat]) groups[cat] = []
+      groups[cat].push(item)
+    }
+    return groups
+  }, [items])
 
   const sessionItemIds = new Set(scanEntries.map(e => e.item_id))
   const progress = items.length > 0 ? Math.round((sessionItemIds.size / items.length) * 100) : 0
   const recentEntries = scanEntries.slice(0, 8)
+  const missedItems = useMemo(() =>
+    items.filter(i => !sessionItemIds.has(i.id)).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    [items, scanEntries]
+  )
 
   return (
     <div>
@@ -222,7 +228,7 @@ export default function Count() {
         </div>
       ) : (
         <>
-          {/* Only show scan + search when no item matched yet */}
+          {/* Only show scan + browse when no item matched yet */}
           {!matchedItem && (
             <>
               <button
@@ -253,33 +259,58 @@ export default function Count() {
               {/* Not found message */}
               {notFound && (
                 <div className="mx-4 mt-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-sm text-red-600 font-semibold">
-                  Barcode not found — search by name below
+                  Barcode not found — pick from list below
                 </div>
               )}
 
-              {/* Name search */}
-              <div className="mx-4 mt-2">
-                <input
-                  value={nameSearch}
-                  onChange={e => setNameSearch(e.target.value)}
-                  placeholder="Search by item name…"
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-blue-400"
-                />
-              </div>
+              {/* Browse items button */}
+              {!showBrowser && (
+                <div className="mx-4 mt-2">
+                  <button
+                    onClick={() => setShowBrowser(true)}
+                    className="w-full bg-gray-100 text-gray-700 font-semibold rounded-xl py-3 text-sm"
+                  >
+                    Browse all items
+                  </button>
+                </div>
+              )}
 
-              {/* Name search results */}
-              {nameResults.length > 0 && (
-                <div className="mx-4 mt-1 border border-gray-200 rounded-xl overflow-hidden">
-                  {nameResults.map(item => (
+              {/* Item browser — scrollable, no keyboard needed */}
+              {showBrowser && (
+                <div className="mx-4 mt-2">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Select an item</span>
                     <button
-                      key={item.id}
-                      onClick={() => selectItem(item)}
-                      className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 active:bg-gray-50"
+                      onClick={() => setShowBrowser(false)}
+                      className="text-xs text-gray-400 font-semibold"
                     >
-                      <div className="text-sm font-semibold text-gray-800">{item.name} {item.size}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku} · {item.primary_supplier}</div>
+                      Close
                     </button>
-                  ))}
+                  </div>
+                  <div className="border border-gray-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
+                    {Object.entries(itemsByCategory).map(([cat, catItems]) => (
+                      <div key={cat}>
+                        <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-200 sticky top-0">
+                          <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide">{cat}</span>
+                        </div>
+                        {catItems.map(item => (
+                          <button
+                            key={item.id}
+                            onClick={() => selectItem(item)}
+                            className="w-full text-left px-4 py-3 border-b border-gray-100 last:border-b-0 active:bg-blue-50 flex items-center justify-between"
+                          >
+                            <div>
+                              <div className="text-sm font-semibold text-gray-800">{item.name} {item.size}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku} · {item.unit}</div>
+                            </div>
+                            <svg className="w-4 h-4 text-gray-300 shrink-0 ml-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </>
@@ -409,6 +440,52 @@ export default function Count() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Not yet counted */}
+      {missedItems.length > 0 && (
+        <div className="mt-4 mb-6">
+          <button
+            onClick={() => setMissedExpanded(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-3 border-t border-b border-gray-100"
+          >
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-bold text-gray-800">Not Yet Counted</h2>
+              <span className="text-xs font-bold bg-orange-50 text-orange-600 px-2 py-0.5 rounded-full">
+                {missedItems.length}
+              </span>
+            </div>
+            <svg
+              className={`w-4 h-4 text-gray-400 transition-transform ${missedExpanded ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {missedExpanded && (
+            <div className="border-b border-gray-100">
+              {missedItems.map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    selectItem(item)
+                    window.scrollTo({ top: 0, behavior: 'smooth' })
+                  }}
+                  className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-100 active:bg-orange-50 text-left"
+                >
+                  <div>
+                    <div className="text-sm font-semibold text-gray-800">{item.name} {item.size}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku} · {item.primary_supplier}</div>
+                  </div>
+                  <svg className="w-4 h-4 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )
