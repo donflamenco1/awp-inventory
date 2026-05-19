@@ -382,17 +382,36 @@ export default function Count() {
               {scanEntries.length} scanned
             </span>
           </div>
+          <p className="px-4 text-xs text-gray-400 mb-2">Tap any entry to correct the count</p>
           <div className="border-t border-gray-100">
             {recentEntries.map(e => (
-              <div key={e.id} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+              <button
+                key={e.id}
+                onClick={() => {
+                  const item = items.find(i => i.id === e.item_id)
+                  if (!item) return
+                  setMatchedItem(item)
+                  setQty(e.quantity)
+                  setSkuInput('')
+                  setNameSearch('')
+                  setNotFound(false)
+                  window.scrollTo({ top: 0, behavior: 'smooth' })
+                }}
+                className="w-full flex items-center justify-between px-4 py-2.5 border-b border-gray-100 active:bg-gray-50 text-left"
+              >
                 <div>
                   <div className="text-sm font-semibold text-gray-800">{e.items?.name} {e.items?.size}</div>
                   <div className="text-xs text-gray-400 mt-0.5">
                     {e.location} · {new Date(e.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                   </div>
                 </div>
-                <div className="text-base font-bold text-blue-700">{e.quantity}</div>
-              </div>
+                <div className="flex items-center gap-2">
+                  <div className="text-base font-bold text-blue-700">{e.quantity}</div>
+                  <svg className="w-3.5 h-3.5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                </div>
+              </button>
             ))}
           </div>
         </>
