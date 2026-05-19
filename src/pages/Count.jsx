@@ -21,6 +21,7 @@ export default function Count() {
   const [feedback, setFeedback] = useState(null)
   const [scanning, setScanning] = useState(false)
   const skuRef = useRef(null)
+  const qtyRef = useRef(null)
   const scannerRef = useRef(null)
   const recognitionRef = useRef(null)
   const lastTapRef = useRef({ plus: 0, minus: 0 })
@@ -331,9 +332,13 @@ export default function Count() {
                   −
                 </button>
                 <input
+                  ref={qtyRef}
+                  key={`${matchedItem?.id}-${location}`}
                   type="text"
                   inputMode="numeric"
                   pattern="[0-9]*"
+                  autoFocus
+                  autoComplete="off"
                   value={qty}
                   onChange={e => {
                     const v = e.target.value.replace(/[^0-9]/g, '')
@@ -352,9 +357,19 @@ export default function Count() {
                   +
                 </button>
               </div>
-              <p className="text-center text-xs text-blue-500 font-semibold mt-1">
-                {existingQty > 0 ? `Enter additional amount — saves as ${existingQty + (Number(qty) || 0)} total` : 'Tap number to type quantity'}
-              </p>
+              {existingQty > 0 && (
+                <p className="text-center text-xs text-orange-500 font-semibold mt-1">
+                  Adding to {existingQty} — saves as {existingQty + (Number(qty) || 0)} total
+                </p>
+              )}
+              {/* Explicit keyboard trigger — guaranteed to open keyboard on Android PWA */}
+              <button
+                onTouchStart={() => qtyRef.current?.focus()}
+                onClick={() => qtyRef.current?.focus()}
+                className="mx-4 mt-2 w-[calc(100%-2rem)] border-2 border-blue-300 border-dashed rounded-xl py-2.5 text-sm font-semibold text-blue-500 active:bg-blue-50"
+              >
+                ⌨ Tap here to type quantity
+              </button>
 
               <button
                 onClick={startVoice}
