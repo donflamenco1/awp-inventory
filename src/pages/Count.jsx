@@ -15,13 +15,14 @@ export default function Count() {
   const [matchedItem, setMatchedItem] = useState(null)
   const [notFound, setNotFound] = useState(false)
   const [qty, setQty] = useState(1)
+  const [btnFlash, setBtnFlash] = useState(null) // 'plus' | 'minus' | null
   const [listening, setListening] = useState(false)
   const [feedback, setFeedback] = useState(null)
   const [scanning, setScanning] = useState(false)
   const skuRef = useRef(null)
   const scannerRef = useRef(null)
   const recognitionRef = useRef(null)
-  // Note: no programmatic focus on qty input — mobile browsers won't open keyboard from JS
+  const lastTapRef = useRef({ plus: 0, minus: 0 })
 
   const { data: items = [] } = useQuery({ queryKey: ['items'], queryFn: getItems })
   const { data: session } = useQuery({ queryKey: ['activeSession'], queryFn: getActiveSession })
@@ -108,6 +109,24 @@ export default function Count() {
       qty: Number(qty),
       itemName: `${matchedItem.name} ${matchedItem.size || ''}`.trim(),
     })
+  }
+
+  function increment() {
+    const now = Date.now()
+    if (now - lastTapRef.current.plus < 150) return
+    lastTapRef.current.plus = now
+    setQty(q => q + 1)
+    setBtnFlash('plus')
+    setTimeout(() => setBtnFlash(null), 120)
+  }
+
+  function decrement() {
+    const now = Date.now()
+    if (now - lastTapRef.current.minus < 150) return
+    lastTapRef.current.minus = now
+    setQty(q => Math.max(0, q - 1))
+    setBtnFlash('minus')
+    setTimeout(() => setBtnFlash(null), 120)
   }
 
   // Camera barcode scanning via Quagga
@@ -285,8 +304,10 @@ export default function Count() {
               {/* Big +/- counter */}
               <div className="flex mx-4 mt-4 gap-3 items-center">
                 <button
-                  onClick={() => setQty(q => Math.max(0, q - 1))}
-                  className="w-16 h-16 bg-gray-100 text-4xl text-gray-700 rounded-2xl active:bg-gray-200 flex items-center justify-center shrink-0"
+                  onClick={decrement}
+                  className={`w-16 h-16 text-4xl rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
+                    btnFlash === 'minus' ? 'bg-gray-400 text-white' : 'bg-gray-100 text-gray-700'
+                  }`}
                 >
                   −
                 </button>
@@ -301,8 +322,10 @@ export default function Count() {
                   className="flex-1 min-w-0 text-center text-5xl font-extrabold border-2 border-gray-200 rounded-2xl py-3 outline-none focus:border-blue-400"
                 />
                 <button
-                  onClick={() => setQty(q => q + 1)}
-                  className="w-16 h-16 bg-gray-100 text-4xl text-gray-700 rounded-2xl active:bg-gray-200 flex items-center justify-center shrink-0"
+                  onClick={increment}
+                  className={`w-16 h-16 text-4xl rounded-2xl flex items-center justify-center shrink-0 transition-colors ${
+                    btnFlash === 'plus' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                  }`}
                 >
                   +
                 </button>
