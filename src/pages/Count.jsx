@@ -21,6 +21,7 @@ export default function Count() {
   const skuRef = useRef(null)
   const scannerRef = useRef(null)
   const recognitionRef = useRef(null)
+  // Note: no programmatic focus on qty input — mobile browsers won't open keyboard from JS
 
   const { data: items = [] } = useQuery({ queryKey: ['items'], queryFn: getItems })
   const { data: session } = useQuery({ queryKey: ['activeSession'], queryFn: getActiveSession })
@@ -239,7 +240,7 @@ export default function Count() {
                   placeholder="Scan barcode or type SKU…"
                   autoComplete="off"
                   autoCapitalize="characters"
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-blue-400"
                 />
               </div>
 
@@ -256,7 +257,7 @@ export default function Count() {
                   value={nameSearch}
                   onChange={e => setNameSearch(e.target.value)}
                   placeholder="Search by item name…"
-                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
+                  className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base outline-none focus:border-blue-400"
                 />
               </div>
 
