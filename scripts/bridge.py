@@ -173,6 +173,20 @@ def health():
     return jsonify({'status': 'ok', 'model': LABEL_MODEL, 'tape': LABEL_TAPE})
 
 
+@app.route('/discover', methods=['GET'])
+def discover_printers():
+    """List all detected printers — open http://192.168.40.220:5757/discover in a browser to check."""
+    from brother_ql.backends.helpers import discover
+    results = {}
+    for backend in ('pyusb', 'linux_kernel'):
+        try:
+            found = discover(backend_identifier=backend)
+            results[backend] = [p['identifier'] for p in found]
+        except Exception as e:
+            results[backend] = f'error: {e}'
+    return jsonify(results)
+
+
 @app.route('/print', methods=['POST'])
 def print_labels():
     data   = request.get_json(force=True)
@@ -208,10 +222,35 @@ def preview_label():
     return send_file(buf, mimetype='image/png')
 
 
+def _detect_printer():
+    """Auto-detect the QL-800 USB identifier. Returns identifier string or raises."""
+    from brother_ql.backends.helpers import discover
+    for backend in ('pyusb', 'linux_kernel'):
+        try:
+            printers = discover(backend_identifier=backend)
+            if printers:
+                found = printers[0]['identifier']
+                print(f'  [bridge] auto-detected printer: {found} (backend: {backend})')
+                return found, backend
+        except Exception as e:
+            print(f'  [bridge] {backend} backend unavailable: {e}')
+    raise RuntimeError(
+        'No printer detected. Make sure the Brother QL-800 is connected via USB '
+        'and the libusb driver is installed (run install_bridge.bat again).'
+    )
+
+
 def _send_to_printer(img: Image.Image):
     from brother_ql.conversion import convert
     from brother_ql.backends.helpers import send
     from brother_ql.raster import BrotherQLRaster
+
+    # Use configured ID or auto-detect
+    if PRINTER_ID and PRINTER_ID != 'usb://0x04f9:0x20c0':
+        printer_id = PRINTER_ID
+        backend    = 'pyusb'
+    else:
+        printer_id, backend = _detect_printer()
 
     qlr = BrotherQLRaster(LABEL_MODEL)
     instructions = convert(
@@ -229,8 +268,8 @@ def _send_to_printer(img: Image.Image):
     )
     send(
         instructions=instructions,
-        printer_identifier=PRINTER_ID,
-        backend_identifier='pyusb',
+        printer_identifier=printer_id,
+        backend_identifier=backend,
         blocking=True,
     )
 

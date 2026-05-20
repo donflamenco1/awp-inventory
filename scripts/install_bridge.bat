@@ -30,7 +30,7 @@ echo.
 :: ── Install packages ─────────────────────────────────────────────────────────
 echo Installing required packages...
 python -m pip install --upgrade pip --quiet
-python -m pip install flask flask-cors brother_ql pillow "python-barcode[images]"
+python -m pip install flask flask-cors brother_ql pillow "python-barcode[images]" libusb pyusb
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: Package installation failed. Check your internet connection and try again.
