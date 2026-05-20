@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getItems } from '../lib/supabase'
 
@@ -11,6 +11,21 @@ function buildSku(item) {
   return item.internal_sku || `${cat}-${nm}${sz ? '-' + sz : ''}`
 }
 
+function itemToLabel(item) {
+  return {
+    name:             item.name || '',
+    size:             item.size || '',
+    category:         item.category || '',
+    unit:             item.unit || 'EACH',
+    primary_max:      item.primary_max || 0,
+    backstock_target: item.backstock_target || 0,
+    reorder_point:    item.reorder_point || 0,
+    order_increment:  item.order_increment || 1,
+    internal_sku:     item.internal_sku || '',
+    sku:              buildSku(item),
+  }
+}
+
 export default function Labels() {
   const { data: items = [] } = useQuery({ queryKey: ['items'], queryFn: getItems })
 
@@ -19,36 +34,39 @@ export default function Labels() {
     primary_max: 5, backstock_target: 3, reorder_point: 1, order_increment: 3,
     internal_sku: '',
   })
-  const [queue, setQueue] = useState([])
+  const [queue, setQueue] = useState([])   // [{ ...labelData, _copies, _qid }]
   const [printing, setPrinting] = useState(false)
   const [printStatus, setPrintStatus] = useState(null)
   const [search, setSearch] = useState('')
+  const [bridgeStatus, setBridgeStatus] = useState('unknown') // 'ok' | 'error' | 'unknown'
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const sku = buildSku(form)
 
+  // Ping bridge on mount
+  useEffect(() => {
+    fetch(`${BRIDGE_URL}/health`, { signal: AbortSignal.timeout(3000) })
+      .then(r => r.ok ? setBridgeStatus('ok') : setBridgeStatus('error'))
+      .catch(() => setBridgeStatus('error'))
+  }, [])
+
   function loadItem(item) {
-    setForm({
-      name: item.name || '',
-      size: item.size || '',
-      category: item.category || '',
-      unit: item.unit || 'EACH',
-      primary_max: item.primary_max || 0,
-      backstock_target: item.backstock_target || 0,
-      reorder_point: item.reorder_point || 0,
-      order_increment: item.order_increment || 1,
-      internal_sku: item.internal_sku || '',
-    })
+    setForm(itemToLabel(item))
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function addToQueue() {
-    if (!form.name) return
-    setQueue(q => [...q, { ...form, sku, id: Date.now() }])
+  function addToQueue(labelData, copies = 1) {
+    if (!labelData.name) return
+    const entry = { ...labelData, sku: buildSku(labelData), _copies: copies, _qid: Date.now() + Math.random() }
+    setQueue(q => [...q, entry])
   }
 
-  function removeFromQueue(id) {
-    setQueue(q => q.filter(i => i.id !== id))
+  function removeFromQueue(qid) {
+    setQueue(q => q.filter(i => i._qid !== qid))
+  }
+
+  function setCopies(qid, copies) {
+    setQueue(q => q.map(i => i._qid === qid ? { ...i, _copies: Math.max(1, copies) } : i))
   }
 
   async function printAll() {
@@ -65,8 +83,10 @@ export default function Labels() {
       const data = await res.json()
       setPrintStatus({ ok: true, msg: `${data.printed} label${data.printed !== 1 ? 's' : ''} sent to QL-800` })
       setQueue([])
+      setBridgeStatus('ok')
     } catch (err) {
-      setPrintStatus({ ok: false, msg: `Print bridge not reachable. Make sure bridge.py is running on your PC. (${err.message})` })
+      setBridgeStatus('error')
+      setPrintStatus({ ok: false, msg: `Print bridge not reachable. Make sure bridge.py is running on the printer PC. (${err.message})` })
     } finally {
       setPrinting(false)
     }
@@ -75,16 +95,31 @@ export default function Labels() {
   const filteredItems = items.filter(i => {
     if (!search) return true
     const q = search.toLowerCase()
-    return i.name?.toLowerCase().includes(q) || i.internal_sku?.toLowerCase().includes(q)
+    return i.name?.toLowerCase().includes(q) || i.internal_sku?.toLowerCase().includes(q) || i.size?.toLowerCase().includes(q)
   })
 
   return (
     <div>
+      {/* Bridge status banner */}
+      <div className={`mx-4 mt-3 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs font-semibold ${
+        bridgeStatus === 'ok'    ? 'bg-green-50 text-green-700' :
+        bridgeStatus === 'error' ? 'bg-red-50 text-red-600' :
+                                   'bg-gray-50 text-gray-500'
+      }`}>
+        <div className={`w-2 h-2 rounded-full ${
+          bridgeStatus === 'ok' ? 'bg-green-500' :
+          bridgeStatus === 'error' ? 'bg-red-400' : 'bg-gray-300'
+        }`} />
+        {bridgeStatus === 'ok'    ? 'Print bridge connected — QL-800 ready' :
+         bridgeStatus === 'error' ? 'Print bridge offline — run bridge.py on printer PC' :
+                                    'Checking print bridge…'}
+      </div>
+
       {/* Label preview */}
       <div className="px-4 pt-4 pb-2">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-bold text-gray-800">Label Preview</h2>
-          <span className="text-xs text-gray-400">Brother QL-800</span>
+          <span className="text-xs text-gray-400">62mm · Brother QL-800</span>
         </div>
         <LabelPreview item={{ ...form, sku }} />
       </div>
@@ -101,7 +136,7 @@ export default function Labels() {
             <input value={form.size} onChange={e => set('size', e.target.value.toUpperCase())}
               className={FI} />
           </LabelField>
-          <LabelField label="Primary Max">
+          <LabelField label="Primary Cap">
             <input type="number" min="0" value={form.primary_max}
               onChange={e => set('primary_max', parseInt(e.target.value) || 0)} className={FI} />
           </LabelField>
@@ -122,7 +157,7 @@ export default function Labels() {
 
       <div className="px-4 mt-3">
         <button
-          onClick={addToQueue}
+          onClick={() => addToQueue({ ...form })}
           disabled={!form.name}
           className="w-full bg-blue-700 text-white font-semibold rounded-xl py-3.5 text-sm disabled:opacity-50"
         >
@@ -134,7 +169,7 @@ export default function Labels() {
       <div className="flex items-center justify-between px-4 pt-5 pb-2">
         <h2 className="text-sm font-bold text-gray-800">Print Queue</h2>
         <span className="bg-blue-700 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
-          {queue.length}
+          {queue.reduce((s, i) => s + i._copies, 0)} labels
         </span>
       </div>
 
@@ -148,23 +183,35 @@ export default function Labels() {
 
       {queue.length === 0 ? (
         <div className="text-center text-sm text-gray-400 py-4 px-4">
-          No labels queued — select an item below or fill in the form above.
+          No labels queued — tap an item below or fill in the form above.
         </div>
       ) : (
         <div className="border-t border-gray-100">
           {queue.map(item => (
-            <div key={item.id} className="flex items-center px-4 py-3 border-b border-gray-100 gap-3">
-              <div className="flex-1">
-                <div className="text-sm font-semibold">{item.name} {item.size}</div>
+            <div key={item._qid} className="flex items-center px-4 py-3 border-b border-gray-100 gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold truncate">{item.name} {item.size}</div>
                 <div className="text-xs text-gray-400 mt-0.5">
                   {item.sku} · Cap {item.primary_max} · Min {item.reorder_point}
                 </div>
               </div>
+              {/* Copies stepper */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button onClick={() => setCopies(item._qid, item._copies - 1)}
+                  className="w-7 h-7 bg-gray-100 rounded-lg text-lg font-bold text-gray-600 flex items-center justify-center">
+                  −
+                </button>
+                <span className="w-6 text-center text-sm font-bold">{item._copies}</span>
+                <button onClick={() => setCopies(item._qid, item._copies + 1)}
+                  className="w-7 h-7 bg-gray-100 rounded-lg text-lg font-bold text-gray-600 flex items-center justify-center">
+                  +
+                </button>
+              </div>
               <button
-                onClick={() => removeFromQueue(item.id)}
-                className="bg-red-50 text-red-600 font-bold text-xs rounded-lg px-3 py-1.5"
+                onClick={() => removeFromQueue(item._qid)}
+                className="bg-red-50 text-red-600 font-bold text-xs rounded-lg px-3 py-1.5 shrink-0"
               >
-                Remove
+                ✕
               </button>
             </div>
           ))}
@@ -174,7 +221,7 @@ export default function Labels() {
               disabled={printing}
               className="flex-1 bg-green-700 text-white font-semibold rounded-xl py-3.5 text-sm disabled:opacity-60"
             >
-              {printing ? 'Sending to printer…' : `Print All to QL-800 (${queue.length})`}
+              {printing ? 'Sending to printer…' : `Print ${queue.reduce((s, i) => s + i._copies, 0)} Label${queue.reduce((s, i) => s + i._copies, 0) !== 1 ? 's' : ''}`}
             </button>
             <button onClick={() => setQueue([])}
               className="bg-gray-100 text-gray-700 font-semibold rounded-xl px-4 text-sm">
@@ -185,8 +232,9 @@ export default function Labels() {
       )}
 
       {/* From catalog */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+      <div className="px-4 pt-4 pb-2">
         <h2 className="text-sm font-bold text-gray-800">From Item Catalog</h2>
+        <p className="text-xs text-gray-400 mt-0.5">Tap to load · 🖨 to quick-add to queue</p>
       </div>
       <div className="px-4 pb-2">
         <input
@@ -196,21 +244,26 @@ export default function Labels() {
           className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-blue-400"
         />
       </div>
-      <div className="border-t border-gray-100">
+      <div className="border-t border-gray-100 mb-8">
         {filteredItems.map(item => (
-          <button
+          <div
             key={item.id}
-            onClick={() => loadItem(item)}
-            className="w-full flex items-center justify-between px-4 py-3 border-b border-gray-100 active:bg-gray-50 text-left"
+            className="flex items-center px-4 py-3 border-b border-gray-100 gap-3"
           >
-            <div>
-              <div className="text-sm font-semibold text-gray-800">{item.name} {item.size}</div>
-              <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku}</div>
-            </div>
-            <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
+            <button
+              onClick={() => loadItem(item)}
+              className="flex-1 text-left active:bg-gray-50 min-w-0"
+            >
+              <div className="text-sm font-semibold text-gray-800 truncate">{item.name} {item.size}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{item.internal_sku} · {item.primary_supplier}</div>
+            </button>
+            <button
+              onClick={() => addToQueue(itemToLabel(item))}
+              className="shrink-0 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg px-3 py-1.5"
+            >
+              🖨 Queue
+            </button>
+          </div>
         ))}
       </div>
     </div>

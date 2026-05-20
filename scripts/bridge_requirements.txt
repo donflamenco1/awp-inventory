@@ -1,0 +1,5 @@
+flask
+flask-cors
+brother_ql
+pillow
+python-barcode[images]
