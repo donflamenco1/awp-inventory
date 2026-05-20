@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getItems, getActiveSession, getCurrentCounts } from '../lib/supabase'
+import * as XLSX from 'xlsx'
 
 const MAIN_SUPPLIERS = ['APPLIED', 'HOME DEPOT', 'MENARDS', 'AMAZON', 'IDI']
 
@@ -67,6 +68,56 @@ export default function Orders() {
     navigator.clipboard.writeText(lines).then(() => alert('Order list copied to clipboard'))
   }
 
+  function exportXlsx() {
+    const date = new Date().toISOString().slice(0, 10)
+    const wb = XLSX.utils.book_new()
+
+    // Build one sheet per supplier that has items
+    const suppliersToExport = [...MAIN_SUPPLIERS, 'OTHER'].filter(s => (ordersBySupplier[s] || []).length > 0)
+
+    for (const sup of suppliersToExport) {
+      const list = ordersBySupplier[sup] || []
+      const rows = list.map(i => ({
+        'SKU / Code': i.vendor_sku || i.internal_sku || '',
+        'Item Name': i.name || '',
+        'Size': i.size || '',
+        'Unit': i.unit || '',
+        'Order Qty': i.order_qty,
+        'Unit Price': parseFloat(i.current_price) || 0,
+        'Est. Cost': i.order_qty * (parseFloat(i.current_price) || 0),
+        'On Hand': i.current_total,
+        'Target': i.ideal,
+      }))
+
+      // Totals row
+      const totalCostForSheet = list.reduce((s, i) => s + i.order_qty * (parseFloat(i.current_price) || 0), 0)
+      rows.push({
+        'SKU / Code': '',
+        'Item Name': 'TOTAL',
+        'Size': '',
+        'Unit': '',
+        'Order Qty': list.reduce((s, i) => s + i.order_qty, 0),
+        'Unit Price': '',
+        'Est. Cost': totalCostForSheet,
+        'On Hand': '',
+        'Target': '',
+      })
+
+      const ws = XLSX.utils.json_to_sheet(rows)
+
+      // Column widths
+      ws['!cols'] = [
+        { wch: 18 }, { wch: 30 }, { wch: 12 }, { wch: 8 },
+        { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 9 },
+      ]
+
+      const sheetName = sup === 'HOME DEPOT' ? 'Home Depot' : sup === 'OTHER' ? 'Other' : sup
+      XLSX.utils.book_append_sheet(wb, ws, sheetName)
+    }
+
+    XLSX.writeFile(wb, `AWP_Orders_${date}.xlsx`)
+  }
+
   return (
     <div>
       {/* Sample data notice when no session */}
@@ -126,7 +177,7 @@ export default function Orders() {
             Copy Order List
           </button>
           <button
-            onClick={() => alert('Export coming soon — will generate .xlsx matching your Order sheets')}
+            onClick={exportXlsx}
             className="flex-1 bg-gray-100 text-gray-700 font-semibold rounded-xl py-3 text-sm"
           >
             Export .xlsx
