@@ -262,20 +262,11 @@ def _detect_printer():
     return 'usb://0x04f9:0x20c0', 'pyusb'
 
 
-def _send_to_printer(img: Image.Image):
+def _make_instructions(img: Image.Image) -> bytes:
     from brother_ql.conversion import convert
-    from brother_ql.backends.helpers import send
     from brother_ql.raster import BrotherQLRaster
-
-    # Use configured ID or auto-detect
-    if PRINTER_ID and PRINTER_ID != 'usb://0x04f9:0x20c0':
-        printer_id = PRINTER_ID
-        backend    = 'pyusb'
-    else:
-        printer_id, backend = _detect_printer()
-
     qlr = BrotherQLRaster(LABEL_MODEL)
-    instructions = convert(
+    return convert(
         qlr=qlr,
         images=[img],
         label=LABEL_TAPE,
@@ -288,6 +279,50 @@ def _send_to_printer(img: Image.Image):
         hq=True,
         cut=True,
     )
+
+
+def _send_via_windows_spooler(instructions: bytes):
+    """Send raw raster instructions through the Windows print spooler."""
+    import win32print
+    # Find the Brother QL-800 in installed Windows printers
+    all_printers = [p[2] for p in win32print.EnumPrinters(
+        win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS
+    )]
+    print(f'  [bridge] Windows printers: {all_printers}')
+    ql = next((p for p in all_printers if 'QL-800' in p or 'QL800' in p), None)
+    if not ql:
+        # Try any Brother printer
+        ql = next((p for p in all_printers if 'Brother' in p), None)
+    if not ql:
+        raise RuntimeError(f'Brother QL-800 not found in Windows printers. Found: {all_printers}')
+    print(f'  [bridge] printing to Windows printer: {ql}')
+    hp = win32print.OpenPrinter(ql)
+    try:
+        win32print.StartDocPrinter(hp, 1, ('AWP Label', None, 'RAW'))
+        win32print.StartPagePrinter(hp)
+        win32print.WritePrinter(hp, bytes(instructions))
+        win32print.EndPagePrinter(hp)
+        win32print.EndDocPrinter(hp)
+    finally:
+        win32print.ClosePrinter(hp)
+
+
+def _send_to_printer(img: Image.Image):
+    instructions = _make_instructions(img)
+
+    # Try Windows spooler first (no libusb needed)
+    if sys.platform == 'win32':
+        try:
+            _send_via_windows_spooler(instructions)
+            return
+        except ImportError:
+            print('  [bridge] pywin32 not installed, falling back to pyusb')
+        except Exception as e:
+            print(f'  [bridge] Windows spooler failed: {e} — trying pyusb')
+
+    # Fall back to pyusb
+    from brother_ql.backends.helpers import send
+    printer_id, backend = _detect_printer()
     send(
         instructions=instructions,
         printer_identifier=printer_id,
