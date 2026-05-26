@@ -21,6 +21,27 @@ FIND YOUR PC IP:
 import io
 import os
 import sys
+import glob
+
+# ── Windows: help pyusb find the libusb DLL ───────────────────────────────────
+if sys.platform == 'win32':
+    _patterns = [
+        os.path.join(sys.prefix, '**', 'libusb-1.0.dll'),
+        os.path.join(sys.prefix, '**', 'libusb*.dll'),
+        'C:/Windows/System32/libusb-1.0.dll',
+        'C:/Windows/SysWOW64/libusb-1.0.dll',
+    ]
+    for _pat in _patterns:
+        _dlls = glob.glob(_pat, recursive=True)
+        if _dlls:
+            _dll_dir = os.path.dirname(_dlls[0])
+            try:
+                os.add_dll_directory(_dll_dir)
+                print(f'[bridge] libusb found: {_dlls[0]}')
+            except Exception:
+                pass
+            break
+
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
@@ -223,21 +244,22 @@ def preview_label():
 
 
 def _detect_printer():
-    """Auto-detect the QL-800 USB identifier. Returns identifier string or raises."""
+    """Auto-detect the QL-800 USB identifier. Returns (identifier, backend)."""
     from brother_ql.backends.helpers import discover
     for backend in ('pyusb', 'linux_kernel'):
         try:
             printers = discover(backend_identifier=backend)
+            print(f'  [bridge] {backend} found: {printers}')
             if printers:
                 found = printers[0]['identifier']
-                print(f'  [bridge] auto-detected printer: {found} (backend: {backend})')
+                print(f'  [bridge] using printer: {found} (backend: {backend})')
                 return found, backend
         except Exception as e:
-            print(f'  [bridge] {backend} backend unavailable: {e}')
-    raise RuntimeError(
-        'No printer detected. Make sure the Brother QL-800 is connected via USB '
-        'and the libusb driver is installed (run install_bridge.bat again).'
-    )
+            print(f'  [bridge] {backend} unavailable: {e}')
+
+    # Last resort — try the known QL-800 USB vendor/product ID directly
+    print('  [bridge] falling back to known QL-800 USB ID: usb://0x04f9:0x20c0')
+    return 'usb://0x04f9:0x20c0', 'pyusb'
 
 
 def _send_to_printer(img: Image.Image):
