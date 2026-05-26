@@ -57,8 +57,8 @@ LABEL_MODEL   = os.environ.get('LABEL_MODEL', 'QL-800')
 LABEL_TAPE    = os.environ.get('LABEL_TAPE', '62')   # 62mm continuous (DK-2205)
 PORT          = int(os.environ.get('PORT', 5757))
 
-# 62mm tape at 300 DPI ≈ 696px wide
-TAPE_W_PX = 696
+# 62mm tape at 300 DPI = 720px wide (brother_ql dots_printable for QL-800 + 62mm)
+TAPE_W_PX = 720
 PAD       = 20
 
 
@@ -185,7 +185,11 @@ def render_label(d: dict) -> Image.Image:
         vw, vh = _text_size(fv, val)
         draw.text((x0 + (col_w - vw) // 2, y + hdr_row + (val_row - vh) // 2), val, font=fv, fill=0)
 
-    return img
+    # Save and reload with 300 DPI so brother_ql doesn't scale it down
+    buf = io.BytesIO()
+    img.save(buf, format='PNG', dpi=(300, 300))
+    buf.seek(0)
+    return Image.open(buf)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
