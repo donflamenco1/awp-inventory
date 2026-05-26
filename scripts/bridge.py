@@ -291,6 +291,80 @@ def health():
     return jsonify({'status': 'ok', 'model': LABEL_MODEL, 'tape': LABEL_TAPE})
 
 
+@app.route('/cert', methods=['GET'])
+def download_cert():
+    """Serve a .mobileconfig profile so iOS installs the cert properly."""
+    if not os.path.exists(CERT_FILE):
+        return 'Certificate not found — bridge may be running in HTTP mode.', 404
+
+    # Read cert and convert to DER base64 for the mobileconfig payload
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import serialization
+        import base64, uuid
+
+        with open(CERT_FILE, 'rb') as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        cert_der_b64 = base64.b64encode(
+            cert.public_bytes(serialization.Encoding.DER)
+        ).decode('ascii')
+
+        mobileconfig = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>AWP_Print_Bridge.cer</string>
+            <key>PayloadContent</key>
+            <data>{cert_der_b64}</data>
+            <key>PayloadDescription</key>
+            <string>Trusts the AWP Print Bridge HTTPS certificate</string>
+            <key>PayloadDisplayName</key>
+            <string>AWP Print Bridge</string>
+            <key>PayloadIdentifier</key>
+            <string>com.awp.printbridge.cert</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>{uuid.uuid4()}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDescription</key>
+    <string>Trusts the AWP Print Bridge SSL certificate for label printing</string>
+    <key>PayloadDisplayName</key>
+    <string>AWP Print Bridge</string>
+    <key>PayloadIdentifier</key>
+    <string>com.awp.printbridge</string>
+    <key>PayloadOrganization</key>
+    <string>All Weather Plus</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{uuid.uuid4()}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>'''
+
+        buf = io.BytesIO(mobileconfig.encode('utf-8'))
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype='application/x-apple-aspen-config',
+            as_attachment=True,
+            download_name='AWP_Print_Bridge.mobileconfig',
+        )
+    except Exception as e:
+        return f'Error generating profile: {e}', 500
+
+
 @app.route('/discover', methods=['GET'])
 def discover_printers():
     """List all detected printers — open http://192.168.40.220:5757/discover in a browser to check."""
