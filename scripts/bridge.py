@@ -267,6 +267,17 @@ def _ensure_ssl_cert():
             .serial_number(x509.random_serial_number())
             .not_valid_before(datetime.datetime.utcnow())
             .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=820))  # iOS requires ≤825 days
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(
+                digital_signature=True, key_cert_sign=True, crl_sign=True,
+                content_commitment=False, key_encipherment=True,
+                data_encipherment=False, key_agreement=False,
+                encipher_only=False, decipher_only=False,
+            ), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([
+                x509.ExtendedKeyUsageOID.SERVER_AUTH,
+                x509.ExtendedKeyUsageOID.CLIENT_AUTH,
+            ]), critical=False)
             .add_extension(san, critical=False)
             .sign(key, hashes.SHA256())
         )
