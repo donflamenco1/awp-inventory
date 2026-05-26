@@ -57,9 +57,12 @@ LABEL_MODEL   = os.environ.get('LABEL_MODEL', 'QL-800')
 LABEL_TAPE    = os.environ.get('LABEL_TAPE', '62')   # 62mm continuous (DK-2205)
 PORT          = int(os.environ.get('PORT', 5757))
 
-# 62mm tape at 300 DPI = 720px wide (brother_ql dots_printable for QL-800 + 62mm)
-TAPE_W_PX = 720
-PAD       = 20
+# Label dimensions: 2.4" × 4.5" landscape on 62mm tape at 300 DPI
+# Landscape: width=4.5"=1350px (along tape), height=2.4"=720px (tape width)
+# We create in landscape then rotate 90° for brother_ql
+LABEL_W = 1350   # px along tape length
+LABEL_H = 720    # px = tape width (62mm @ 300dpi)
+PAD     = 24
 
 
 # ── Font helpers ──────────────────────────────────────────────────────────────
@@ -85,107 +88,131 @@ def _text_size(font, text):
 # ── Label renderer ────────────────────────────────────────────────────────────
 def render_label(d: dict) -> Image.Image:
     """
-    Render one label as a grayscale PIL Image sized for 62mm QL-800 tape.
-    Layout (top to bottom):
-      • Header:  ITEM NAME (large bold) + size + SKU (right-aligned)
-      • Divider line
-      • Barcode (Code 128 of the SKU)
-      • Divider line
-      • 4-column data table: PRIMARY CAP | BACKSTOCK CAP | SHELF MIN | ORD MULT
+    Render a 2.4" x 4.5" landscape label matching the original Shelf Labels.lbx layout:
+      TOP:    Item Name (large) + Detail/Size
+      MIDDLE: 4-row table on left (PRIMARY CAP / BACKSTOCK CAP / SHELF MIN / ORD MULT)
+              SKU + Unit + Category on right
+      BOTTOM: Full-width Code 39 barcode
+    Image is created landscape (1350x720) then rotated 90° for brother_ql.
     """
-    name    = (d.get('name')             or '').upper()
-    size_s  = (d.get('size')             or '').upper()
-    sku     = (d.get('sku') or d.get('internal_sku') or 'NOSKU').upper()
-    p_max   = str(d.get('primary_max',       0))
-    b_cap   = str(d.get('backstock_target',  0))
-    s_min   = str(d.get('reorder_point',     0))
-    o_mult  = str(d.get('order_increment',   1))
+    name   = (d.get('name')            or '').upper()
+    size_s = (d.get('size')            or '').upper()
+    sku    = (d.get('sku') or d.get('internal_sku') or 'NOSKU').upper()
+    unit   = (d.get('unit')            or 'EACH').upper()
+    cat    = (d.get('category')        or '').upper()
+    p_max  = str(d.get('primary_max',      0))
+    b_cap  = str(d.get('backstock_target', 0))
+    s_min  = str(d.get('reorder_point',    0))
+    o_mult = str(d.get('order_increment',  1))
 
-    # Fonts
-    fn = _font(78, bold=True)   # item name
-    fs = _font(44)              # size subtitle
-    fk = _font(34)              # sku
-    fh = _font(26)              # table header
-    fv = _font(54, bold=True)   # table value
+    # Fonts (sized for 300 DPI landscape label)
+    f_name  = _font(92, bold=True)   # item name
+    f_size  = _font(64, bold=True)   # detail/size
+    f_lbl   = _font(30, bold=True)   # table row labels
+    f_val   = _font(52, bold=True)   # table row values
+    f_small = _font(28, bold=True)   # SKU / unit / category
 
-    # ── Barcode image ─────────────────────────────────────────────────────────
-    bc_img = None
+    W, H = LABEL_W, LABEL_H
+    img  = Image.new('L', (W, H), color=255)
+    draw = ImageDraw.Draw(img)
+
+    # ── Section heights ───────────────────────────────────────────────────────
+    top_h    = 200   # item name + size strip
+    bottom_h = 150   # barcode strip
+    mid_y    = top_h
+    mid_h    = H - top_h - bottom_h   # ~370px for table + right info
+
+    # ── TOP: Item Name + Size ─────────────────────────────────────────────────
+    # Background
+    draw.rectangle([0, 0, W, top_h], fill=255)
+    draw.rectangle([0, top_h - 3, W, top_h], fill=0)  # bottom border
+
+    # Item name centered
+    nw, nh = _text_size(f_name, name or 'ITEM')
+    draw.text(((W - nw) // 2, PAD), name or 'ITEM', font=f_name, fill=0)
+
+    # Size centered below name
+    if size_s:
+        sw, sh = _text_size(f_size, size_s)
+        draw.text(((W - sw) // 2, PAD + nh + 6), size_s, font=f_size, fill=60)
+
+    # ── MIDDLE: Table (left) + Info (right) ───────────────────────────────────
+    table_x  = PAD
+    table_w  = 480   # left table width
+    info_x   = table_x + table_w + PAD
+    info_w   = W - info_x - PAD
+
+    rows = [
+        ('PRIMARY CAP',   p_max),
+        ('BACKSTOCK CAP', b_cap),
+        ('SHELF MIN',     s_min),
+        ('ORD MULT',      o_mult),
+    ]
+    row_h = mid_h // len(rows)
+    lbl_col_w = 310   # label column width
+    val_col_w = table_w - lbl_col_w
+
+    for ri, (lbl, val) in enumerate(rows):
+        ry0 = mid_y + ri * row_h
+        ry1 = ry0 + row_h
+        # Row border
+        draw.rectangle([table_x, ry0, table_x + table_w, ry1], outline=0, width=2)
+        # Alternating row background
+        if ri % 2 == 0:
+            draw.rectangle([table_x + 2, ry0 + 2, table_x + table_w - 2, ry1 - 2], fill=240)
+        # Label (right-aligned in label column)
+        lw, lh = _text_size(f_lbl, lbl)
+        draw.text((table_x + lbl_col_w - lw - 8, ry0 + (row_h - lh) // 2), lbl, font=f_lbl, fill=0)
+        # Divider between label and value
+        draw.line([table_x + lbl_col_w, ry0, table_x + lbl_col_w, ry1], fill=0, width=2)
+        # Value (centered in value column)
+        vw, vh = _text_size(f_val, val)
+        draw.text((table_x + lbl_col_w + (val_col_w - vw) // 2, ry0 + (row_h - vh) // 2), val, font=f_val, fill=0)
+
+    # Right side: SKU, Unit, Category
+    iy = mid_y + PAD
+    for label_txt, value_txt in [('SKU', sku), ('UNIT', unit), ('CATEGORY', cat)]:
+        if not value_txt:
+            continue
+        lw, lh = _text_size(f_small, label_txt + ':')
+        draw.text((info_x, iy), label_txt + ':', font=f_small, fill=120)
+        vw, vh = _text_size(f_val, value_txt)
+        # Value on same line if it fits, else next line
+        if lw + 12 + vw <= info_w:
+            draw.text((info_x + lw + 12, iy + (lh - vh) // 2), value_txt, font=f_val, fill=0)
+            iy += max(lh, vh) + 16
+        else:
+            iy += lh + 4
+            draw.text((info_x, iy), value_txt, font=f_val, fill=0)
+            iy += vh + 16
+
+    # ── BOTTOM: Code 39 barcode ───────────────────────────────────────────────
+    bc_y = H - bottom_h
+    draw.rectangle([0, bc_y, W, bc_y + 2], fill=0)
+
     try:
         import barcode as bc_lib
         from barcode.writer import ImageWriter
-        code = bc_lib.get('code128', sku, writer=ImageWriter())
+        code = bc_lib.get('code39', sku, writer=ImageWriter())
         buf  = io.BytesIO()
         code.write(buf, options={
-            'module_width': 0.55, 'module_height': 8.0,
-            'font_size': 5, 'text_distance': 2.0,
+            'module_width': 0.9, 'module_height': 10.0,
+            'font_size': 6, 'text_distance': 2.5,
             'background': 'white', 'foreground': 'black',
-            'quiet_zone': 2.0, 'write_text': True,
+            'quiet_zone': 2.5, 'write_text': True,
         })
         buf.seek(0)
-        raw = Image.open(buf).convert('L')
-        bc_img = raw.resize((TAPE_W_PX - PAD * 2, 96), Image.LANCZOS)
+        bc_raw = Image.open(buf).convert('L')
+        bc_img = bc_raw.resize((W - PAD * 2, bottom_h - 12), Image.LANCZOS)
+        img.paste(bc_img, (PAD, bc_y + 8))
     except Exception as e:
-        print(f'  [bridge] barcode generation skipped: {e}')
+        print(f'  [bridge] barcode skipped: {e}')
+        draw.text((PAD, bc_y + 10), f'*{sku}*', font=f_small, fill=0)
 
-    # ── Measure sections ──────────────────────────────────────────────────────
-    nw, nh = _text_size(fn, name or 'ITEM')
-    sw, sh = _text_size(fs, size_s) if size_s else (0, 0)
-    kw, kh = _text_size(fk, sku)
+    # Rotate landscape→portrait for brother_ql (tape width becomes image width)
+    img = img.rotate(90, expand=True)
 
-    header_h  = PAD + nh + (sh + 6 if size_s else 0) + kh + PAD
-    div_h     = 3
-    bc_h      = (96 + PAD * 2) if bc_img else 0
-    table_h   = 44 + 60 + PAD   # header row + value row + bottom pad
-    total_h   = header_h + div_h + bc_h + div_h + table_h
-
-    img  = Image.new('L', (TAPE_W_PX, total_h), color=255)
-    draw = ImageDraw.Draw(img)
-
-    # ── Header ────────────────────────────────────────────────────────────────
-    y = PAD
-    draw.text((PAD, y), name or 'ITEM', font=fn, fill=0)
-    y += nh + 4
-    if size_s:
-        draw.text((PAD, y), size_s, font=fs, fill=80)
-        y += sh + 6
-    # SKU right-aligned on same line as name (top-right)
-    draw.text((TAPE_W_PX - PAD - kw, PAD), sku, font=fk, fill=120)
-    y += kh + PAD
-
-    # ── Divider ───────────────────────────────────────────────────────────────
-    draw.rectangle([PAD, y, TAPE_W_PX - PAD, y + div_h], fill=0)
-    y += div_h + PAD
-
-    # ── Barcode ───────────────────────────────────────────────────────────────
-    if bc_img:
-        img.paste(bc_img, (PAD, y))
-        y += 96 + PAD
-        draw.rectangle([PAD, y, TAPE_W_PX - PAD, y + div_h], fill=0)
-        y += div_h + PAD
-
-    # ── 4-column data table ───────────────────────────────────────────────────
-    cols     = [('PRIMARY\nCAP', p_max), ('BACKSTOCK\nCAP', b_cap),
-                ('SHELF\nMIN',   s_min), ('ORD\nMULT',      o_mult)]
-    col_w    = (TAPE_W_PX - PAD * 2) // 4
-    hdr_row  = 44
-    val_row  = 60
-
-    for ci, (hdr, val) in enumerate(cols):
-        x0 = PAD + ci * col_w
-        x1 = x0 + col_w
-        # Outer border
-        draw.rectangle([x0, y, x1, y + hdr_row + val_row], outline=0, width=2)
-        # Header background
-        draw.rectangle([x0 + 2, y + 2, x1 - 2, y + hdr_row - 2], fill=220)
-        # Header text (2 lines, centered)
-        for li, line in enumerate(hdr.split('\n')):
-            lw, lh = _text_size(fh, line)
-            draw.text((x0 + (col_w - lw) // 2, y + 4 + li * (lh + 2)), line, font=fh, fill=0)
-        # Value (centered)
-        vw, vh = _text_size(fv, val)
-        draw.text((x0 + (col_w - vw) // 2, y + hdr_row + (val_row - vh) // 2), val, font=fv, fill=0)
-
-    # Save and reload with 300 DPI so brother_ql doesn't scale it down
+    # Tag with 300 DPI so brother_ql doesn't rescale
     buf = io.BytesIO()
     img.save(buf, format='PNG', dpi=(300, 300))
     buf.seek(0)
@@ -274,7 +301,7 @@ def _make_instructions(img: Image.Image) -> bytes:
         qlr=qlr,
         images=[img],
         label=LABEL_TAPE,
-        rotate='0',
+        rotate='0',   # already rotated in render_label
         threshold=70,
         dither=False,
         compress=False,
