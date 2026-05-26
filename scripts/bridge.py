@@ -266,7 +266,7 @@ def _ensure_ssl_cert():
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(datetime.datetime.utcnow())
-            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=820))  # iOS requires ≤825 days
             .add_extension(san, critical=False)
             .sign(key, hashes.SHA256())
         )
