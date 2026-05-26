@@ -74,50 +74,66 @@ export default function Orders() {
     const date = new Date().toISOString().slice(0, 10)
     const wb = XLSX.utils.book_new()
 
-    // Build one sheet per supplier that has items
+    const HEADERS = ['SKU / Code', 'Item Name', 'Size', 'Unit', 'Order Qty', 'Unit Price', 'Est. Cost', 'On Hand', 'Target']
+    const CURRENCY_FMT = '"$"#,##0.00'
+    const NUMBER_FMT   = '#,##0'
+
     const suppliersToExport = [...MAIN_SUPPLIERS, 'OTHER'].filter(s => (ordersBySupplier[s] || []).length > 0)
 
     for (const sup of suppliersToExport) {
       const list = ordersBySupplier[sup] || []
-      const rows = list.map(i => ({
-        'SKU / Code': i.vendor_sku || i.internal_sku || '',
-        'Item Name': i.name || '',
-        'Size': i.size || '',
-        'Unit': i.unit || '',
-        'Order Qty': i.order_qty,
-        'Unit Price': parseFloat(i.current_price) || 0,
-        'Est. Cost': i.order_qty * (parseFloat(i.current_price) || 0),
-        'On Hand': i.current_total,
-        'Target': i.ideal,
-      }))
+      const dataRows = list.map(i => [
+        i.vendor_sku || i.internal_sku || '',
+        i.name || '',
+        i.size || '',
+        i.unit || '',
+        i.order_qty,
+        parseFloat(i.current_price) || 0,
+        i.order_qty * (parseFloat(i.current_price) || 0),
+        i.current_total,
+        i.ideal,
+      ])
 
       // Totals row
+      const totalQty  = list.reduce((s, i) => s + i.order_qty, 0)
       const totalCostForSheet = list.reduce((s, i) => s + i.order_qty * (parseFloat(i.current_price) || 0), 0)
-      rows.push({
-        'SKU / Code': '',
-        'Item Name': 'TOTAL',
-        'Size': '',
-        'Unit': '',
-        'Order Qty': list.reduce((s, i) => s + i.order_qty, 0),
-        'Unit Price': '',
-        'Est. Cost': totalCostForSheet,
-        'On Hand': '',
-        'Target': '',
-      })
+      const totalRow = ['', 'TOTAL', '', '', totalQty, '', totalCostForSheet, '', '']
 
-      const ws = XLSX.utils.json_to_sheet(rows)
+      const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...dataRows, totalRow])
 
-      // Column widths
+      // ── Format data cells ──────────────────────────────────────────────────
+      const numDataRows = dataRows.length
+      for (let r = 1; r <= numDataRows; r++) {
+        // Col E (4) = Order Qty, Col H (7) = On Hand, Col I (8) = Target
+        for (const c of [4, 7, 8]) {
+          const ref = XLSX.utils.encode_cell({ r, c })
+          if (ws[ref]) ws[ref].z = NUMBER_FMT
+        }
+        // Col F (5) = Unit Price, Col G (6) = Est. Cost
+        for (const c of [5, 6]) {
+          const ref = XLSX.utils.encode_cell({ r, c })
+          if (ws[ref]) ws[ref].z = CURRENCY_FMT
+        }
+      }
+      // Totals row — format Est. Cost
+      const totR = numDataRows + 1
+      const totCostRef = XLSX.utils.encode_cell({ r: totR, c: 6 })
+      if (ws[totCostRef]) ws[totCostRef].z = CURRENCY_FMT
+      const totQtyRef = XLSX.utils.encode_cell({ r: totR, c: 4 })
+      if (ws[totQtyRef]) ws[totQtyRef].z = NUMBER_FMT
+
+      // ── Autofilter + column widths ─────────────────────────────────────────
+      ws['!autofilter'] = { ref: `A1:I1` }
       ws['!cols'] = [
-        { wch: 18 }, { wch: 30 }, { wch: 12 }, { wch: 8 },
-        { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 9 },
+        { wch: 18 }, { wch: 32 }, { wch: 12 }, { wch: 8 },
+        { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 9 },
       ]
 
       const sheetName = sup === 'HOME DEPOT' ? 'Home Depot' : sup === 'OTHER' ? 'Other' : sup
       XLSX.utils.book_append_sheet(wb, ws, sheetName)
     }
 
-    XLSX.writeFile(wb, `AWP_Orders_${date}.xlsx`)
+    XLSX.writeFile(wb, `AWP_Orders_${date}.xlsx`, { cellStyles: true })
   }
 
   return (
