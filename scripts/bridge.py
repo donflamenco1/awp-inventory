@@ -46,6 +46,10 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from PIL import Image, ImageDraw, ImageFont
 
+# python-barcode uses the removed ANTIALIAS constant — patch it back
+if not hasattr(Image, 'ANTIALIAS'):
+    Image.ANTIALIAS = Image.LANCZOS
+
 app = Flask(__name__)
 CORS(app)
 
