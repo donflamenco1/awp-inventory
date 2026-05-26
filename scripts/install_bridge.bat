@@ -30,7 +30,7 @@ echo.
 :: ── Install packages ─────────────────────────────────────────────────────────
 echo Installing required packages...
 python -m pip install --upgrade pip --quiet
-python -m pip install flask flask-cors brother_ql pillow "python-barcode[images]" libusb pyusb pywin32
+python -m pip install flask flask-cors brother_ql pillow "python-barcode[images]" libusb pyusb pywin32 cryptography
 if %errorlevel% neq 0 (
     echo.
     echo ERROR: Package installation failed. Check your internet connection and try again.
@@ -64,6 +64,17 @@ echo Creating startup wrapper...
     echo goto loop
 ) > "%WRAPPER%"
 echo Wrapper created. OK.
+echo.
+
+:: ── Open firewall port 5757 ────────────────────────────────────────────────────
+echo Opening firewall port 5757...
+netsh advfirewall firewall delete rule name="AWP Print Bridge" >nul 2>&1
+netsh advfirewall firewall add rule name="AWP Print Bridge" dir=in action=allow protocol=TCP localport=5757
+if %errorlevel% neq 0 (
+    echo WARNING: Could not add firewall rule. Right-click and Run as Administrator if mobile devices cannot connect.
+) else (
+    echo Firewall rule added. OK.
+)
 echo.
 
 :: ── Register Windows Scheduled Task ──────────────────────────────────────────
@@ -103,7 +114,13 @@ echo.
 echo You can verify it is working by opening the AWP Inventory
 echo app and checking for the green dot on the Labels page.
 echo.
-echo IP Address: 192.168.40.220
-echo Port:       5757
+echo Bridge URL: https://192.168.40.220:5757
+echo.
+echo IMPORTANT - First-time phone setup (one time per device):
+echo   1. Open Safari on the phone and go to:
+echo      https://192.168.40.220:5757/health
+echo   2. Tap "Show Details" then "visit this website"
+echo   3. Go to Settings ^> General ^> About ^> Certificate Trust Settings
+echo      and turn ON "AWP Print Bridge"
 echo.
 pause

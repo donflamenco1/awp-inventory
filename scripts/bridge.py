@@ -2,26 +2,33 @@
 AWP Inventory – Brother QL-800 Print Bridge
 ============================================
 Run this script on the PC that has the Brother QL-800 connected via USB.
-It listens on port 5757 and accepts label print jobs from the web app.
+It listens on port 5757 (HTTPS) and accepts label print jobs from the web app.
 
 SETUP (run once):
-    pip install flask flask-cors brother_ql pillow python-barcode[images]
+    pip install flask flask-cors brother_ql pillow python-barcode[images] cryptography
 
 USAGE:
     python scripts/bridge.py
 
-Then in Vercel → Settings → Environment Variables, set:
-    VITE_PRINT_BRIDGE_URL = http://<this-pc-ip>:5757
+FIRST RUN:
+    A self-signed SSL certificate is generated automatically (bridge_cert.pem / bridge_key.pem).
+    Each phone/tablet that needs to print must trust this certificate ONCE:
+      1. Open Safari on the phone and go to:  https://192.168.40.220:5757/health
+      2. Tap "Show Details" → "visit this website" → enter your passcode if prompted.
+      3. Go to Settings → General → About → Certificate Trust Settings
+         and toggle ON "AWP Print Bridge".
+    Desktop Chrome: click "Advanced" → "Proceed to 192.168.40.220 (unsafe)" on first visit.
 
-FIND YOUR PC IP:
-    Open Command Prompt and run:  ipconfig
-    Look for "IPv4 Address" under your active network adapter.
+Then in Vercel → Settings → Environment Variables, set:
+    VITE_PRINT_BRIDGE_URL = https://192.168.40.220:5757
 """
 
 import io
 import os
 import sys
 import glob
+import datetime
+import ipaddress
 
 # ── Windows: help pyusb find the libusb DLL ───────────────────────────────────
 if sys.platform == 'win32':
@@ -60,6 +67,12 @@ PRINTER_ID    = os.environ.get('PRINTER_ID', 'usb://0x04f9:0x20c0')
 LABEL_MODEL   = os.environ.get('LABEL_MODEL', 'QL-800')
 LABEL_TAPE    = os.environ.get('LABEL_TAPE', '62')   # 62mm continuous (DK-2205)
 PORT          = int(os.environ.get('PORT', 5757))
+BRIDGE_IP     = os.environ.get('BRIDGE_IP', '192.168.40.220')
+
+# SSL cert files (generated once in same folder as this script)
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CERT_FILE   = os.path.join(_SCRIPT_DIR, 'bridge_cert.pem')
+KEY_FILE    = os.path.join(_SCRIPT_DIR, 'bridge_key.pem')
 
 # Label dimensions: 2.4" × 4.5" landscape on 62mm tape at 300 DPI
 # Landscape: width=4.5"=1350px (along tape), height=2.4"=720px (tape width)
@@ -223,6 +236,55 @@ def render_label(d: dict) -> Image.Image:
     return Image.open(buf)
 
 
+# ── SSL certificate (generated once, reused on every restart) ─────────────────
+def _ensure_ssl_cert():
+    """Generate a self-signed cert if one doesn't exist yet."""
+    if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
+        print(f'  [bridge] SSL cert found: {CERT_FILE}')
+        return
+    print('  [bridge] Generating self-signed SSL certificate (one-time)...')
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME,          u'AWP Print Bridge'),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME,    u'All Weather Plus'),
+        ])
+        san = x509.SubjectAlternativeName([
+            x509.IPAddress(ipaddress.IPv4Address(BRIDGE_IP)),
+            x509.IPAddress(ipaddress.IPv4Address('127.0.0.1')),
+            x509.DNSName(u'localhost'),
+        ])
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.utcnow())
+            .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=3650))
+            .add_extension(san, critical=False)
+            .sign(key, hashes.SHA256())
+        )
+        with open(CERT_FILE, 'wb') as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+        with open(KEY_FILE, 'wb') as f:
+            f.write(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            ))
+        print(f'  [bridge] SSL cert written: {CERT_FILE}')
+    except ImportError:
+        print('  [bridge] WARNING: cryptography package not installed.')
+        print('  [bridge] Run:  pip install cryptography')
+        print('  [bridge] Falling back to HTTP (mobile devices may not work).')
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/health', methods=['GET'])
 def health():
@@ -368,18 +430,30 @@ def _send_to_printer(img: Image.Image):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    _ensure_ssl_cert()
+
+    ssl_ctx = None
+    protocol = 'http'
+    if os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE):
+        ssl_ctx = (CERT_FILE, KEY_FILE)
+        protocol = 'https'
+
     print('=' * 60)
     print('  AWP Inventory – Brother QL-800 Print Bridge')
     print('=' * 60)
-    print(f'  Printer : {PRINTER_ID}')
-    print(f'  Model   : {LABEL_MODEL}')
-    print(f'  Tape    : {LABEL_TAPE}mm continuous (DK-2205)')
-    print(f'  Port    : {PORT}')
+    print(f'  Printer  : {PRINTER_ID}')
+    print(f'  Model    : {LABEL_MODEL}')
+    print(f'  Tape     : {LABEL_TAPE}mm continuous (DK-2205)')
+    print(f'  Port     : {PORT}')
+    print(f'  Protocol : {protocol.upper()}')
     print()
-    print('  To find your PC IP address, open Command Prompt and run:')
-    print('    ipconfig')
+    print(f'  Bridge URL: {protocol}://{BRIDGE_IP}:{PORT}')
     print()
-    print('  Bridge URL (already configured in app):')
-    print(f'    http://192.168.40.220:{PORT}')
+    if protocol == 'https':
+        print('  FIRST-TIME PHONE SETUP (one-time per device):')
+        print(f'    1. Open Safari and go to: https://{BRIDGE_IP}:{PORT}/health')
+        print('    2. Tap "Show Details" → "visit this website"')
+        print('    3. Settings → General → About → Certificate Trust Settings')
+        print('       → Enable "AWP Print Bridge"')
     print('=' * 60)
-    app.run(host='0.0.0.0', port=PORT, debug=False)
+    app.run(host='0.0.0.0', port=PORT, debug=False, ssl_context=ssl_ctx)

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getItems } from '../lib/supabase'
 
-const BRIDGE_URL = import.meta.env.VITE_PRINT_BRIDGE_URL || 'http://192.168.40.220:5757'
+const BRIDGE_URL = import.meta.env.VITE_PRINT_BRIDGE_URL || 'https://192.168.40.220:5757'
 
 function buildSku(item) {
   const cat = (item.category || '').substring(0, 2).toUpperCase()
