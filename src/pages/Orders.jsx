@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getItems, getActiveSession, getCurrentCounts } from '../lib/supabase'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 
 const MAIN_SUPPLIERS = ['APPLIED', 'HOME DEPOT', 'MENARDS', 'AMAZON', 'IDI']
 
@@ -70,70 +70,110 @@ export default function Orders() {
     navigator.clipboard.writeText(lines).then(() => alert('Order list copied to clipboard'))
   }
 
-  function exportXlsx() {
+  async function exportXlsx() {
     const date = new Date().toISOString().slice(0, 10)
-    const wb = XLSX.utils.book_new()
+    const wb   = new ExcelJS.Workbook()
 
     const HEADERS = ['SKU / Code', 'Item Name', 'Size', 'Unit', 'Order Qty', 'Unit Price', 'Est. Cost', 'On Hand', 'Target']
-    const CURRENCY_FMT = '"$"#,##0.00'
-    const NUMBER_FMT   = '#,##0'
+    const COL_WIDTHS = [18, 32, 12, 8, 10, 12, 12, 9, 9]
+
+    // Header style — dark blue background, white bold text
+    const headerStyle = {
+      font:      { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 },
+      fill:      { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1B3A6B' } },
+      alignment: { horizontal: 'center', vertical: 'middle' },
+      border: {
+        bottom: { style: 'thin', color: { argb: 'FF1B3A6B' } },
+      },
+    }
+
+    // Alternating row fills
+    const fillEven = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF7' } }  // light blue
+    const fillOdd  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFFF' } }  // white
+
+    // Totals row style
+    const totalStyle = {
+      font: { bold: true, size: 11 },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCE6F1' } },
+      border: { top: { style: 'thin', color: { argb: 'FF1B3A6B' } } },
+    }
 
     const suppliersToExport = [...MAIN_SUPPLIERS, 'OTHER'].filter(s => (ordersBySupplier[s] || []).length > 0)
 
     for (const sup of suppliersToExport) {
-      const list = ordersBySupplier[sup] || []
-      const dataRows = list.map(i => [
-        i.vendor_sku || i.internal_sku || '',
-        i.name || '',
-        i.size || '',
-        i.unit || '',
-        i.order_qty,
-        parseFloat(i.current_price) || 0,
-        i.order_qty * (parseFloat(i.current_price) || 0),
-        i.current_total,
-        i.ideal,
-      ])
+      const list      = ordersBySupplier[sup] || []
+      const sheetName = sup === 'HOME DEPOT' ? 'Home Depot' : sup === 'OTHER' ? 'Other' : sup
+      const ws        = wb.addWorksheet(sheetName)
+
+      // Column widths
+      ws.columns = COL_WIDTHS.map((w, i) => ({ header: HEADERS[i], width: w }))
+
+      // Header row styling
+      const hRow = ws.getRow(1)
+      hRow.height = 22
+      HEADERS.forEach((_, ci) => {
+        const cell = hRow.getCell(ci + 1)
+        cell.value = HEADERS[ci]
+        Object.assign(cell, headerStyle)
+        cell.font      = { ...headerStyle.font }
+        cell.fill      = headerStyle.fill
+        cell.alignment = headerStyle.alignment
+        cell.border    = headerStyle.border
+      })
+
+      // Data rows
+      list.forEach((item, idx) => {
+        const price = parseFloat(item.current_price) || 0
+        const cost  = item.order_qty * price
+        const row   = ws.addRow([
+          item.vendor_sku || item.internal_sku || '',
+          item.name || '',
+          item.size || '',
+          item.unit || '',
+          item.order_qty,
+          price,
+          cost,
+          item.current_total,
+          item.ideal,
+        ])
+        row.height = 18
+        const fill = idx % 2 === 0 ? fillEven : fillOdd
+        row.eachCell(cell => { cell.fill = fill })
+        // Currency format
+        row.getCell(6).numFmt = '"$"#,##0.00'
+        row.getCell(7).numFmt = '"$"#,##0.00'
+        // Number format
+        row.getCell(5).numFmt = '#,##0'
+        row.getCell(8).numFmt = '#,##0'
+        row.getCell(9).numFmt = '#,##0'
+      })
 
       // Totals row
       const totalQty  = list.reduce((s, i) => s + i.order_qty, 0)
-      const totalCostForSheet = list.reduce((s, i) => s + i.order_qty * (parseFloat(i.current_price) || 0), 0)
-      const totalRow = ['', 'TOTAL', '', '', totalQty, '', totalCostForSheet, '', '']
+      const totalCost = list.reduce((s, i) => s + i.order_qty * (parseFloat(i.current_price) || 0), 0)
+      const totRow = ws.addRow(['', 'TOTAL', '', '', totalQty, '', totalCost, '', ''])
+      totRow.height = 20
+      totRow.eachCell(cell => {
+        cell.font   = totalStyle.font
+        cell.fill   = totalStyle.fill
+        cell.border = totalStyle.border
+      })
+      totRow.getCell(5).numFmt = '#,##0'
+      totRow.getCell(7).numFmt = '"$"#,##0.00'
 
-      const ws = XLSX.utils.aoa_to_sheet([HEADERS, ...dataRows, totalRow])
-
-      // ── Format data cells ──────────────────────────────────────────────────
-      const numDataRows = dataRows.length
-      for (let r = 1; r <= numDataRows; r++) {
-        // Col E (4) = Order Qty, Col H (7) = On Hand, Col I (8) = Target
-        for (const c of [4, 7, 8]) {
-          const ref = XLSX.utils.encode_cell({ r, c })
-          if (ws[ref]) ws[ref].z = NUMBER_FMT
-        }
-        // Col F (5) = Unit Price, Col G (6) = Est. Cost
-        for (const c of [5, 6]) {
-          const ref = XLSX.utils.encode_cell({ r, c })
-          if (ws[ref]) ws[ref].z = CURRENCY_FMT
-        }
-      }
-      // Totals row — format Est. Cost
-      const totR = numDataRows + 1
-      const totCostRef = XLSX.utils.encode_cell({ r: totR, c: 6 })
-      if (ws[totCostRef]) ws[totCostRef].z = CURRENCY_FMT
-      const totQtyRef = XLSX.utils.encode_cell({ r: totR, c: 4 })
-      if (ws[totQtyRef]) ws[totQtyRef].z = NUMBER_FMT
-
-      // ── Autofilter + column widths ─────────────────────────────────────────
-      ws['!autofilter'] = { ref: `A1:I1` }
-      ws['!cols'] = [
-        { wch: 18 }, { wch: 32 }, { wch: 12 }, { wch: 8 },
-        { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 9 },
-      ]
-
-      const sheetName = sup === 'HOME DEPOT' ? 'Home Depot' : sup === 'OTHER' ? 'Other' : sup
-      XLSX.utils.book_append_sheet(wb, ws, sheetName)
+      // Autofilter on header row
+      ws.autoFilter = { from: 'A1', to: `I1` }
     }
 
-    XLSX.writeFile(wb, `AWP_Orders_${date}.xlsx`, { cellStyles: true })
+    // Download
+    const buffer = await wb.xlsx.writeBuffer()
+    const blob   = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url    = URL.createObjectURL(blob)
+    const a      = document.createElement('a')
+    a.href       = url
+    a.download   = `AWP_Orders_${date}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
