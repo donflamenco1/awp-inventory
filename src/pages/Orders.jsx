@@ -10,6 +10,8 @@ function fmtCurrency(n) {
 }
 
 function calcOrderQty(item, total) {
+  // Only trigger an order when at or below the shelf minimum (reorder_point)
+  if (total > (item.reorder_point || 0)) return 0
   const ideal = (item.primary_max || 0) + (item.backstock_target || 0)
   const gap = Math.max(0, ideal - total)
   if (gap === 0) return 0
